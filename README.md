@@ -10,6 +10,16 @@
 
 The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. The same canonical pilot works in Claude Code, Gemini CLI, Cursor, Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
 
+## 🛡️ Proactive by Design (not just a scanner)
+
+Unlike traditional tools that only run *after* you have written code, the USP is a **behavioral engine** for AI agents. It changes what the agent writes in the first place.
+
+- **Contextual awareness.** Once an agent indexes the `.security-pilot/` directory, the framework becomes part of its internal reasoning loop — every plan, every diff, every commit is filtered through the pilot's rules.
+- **The Iron Law, mechanically enforced.** The agent is structurally restricted from shipping a security fix without a preceding, *failing* PoC test that proves the vulnerability. See [The Iron Law](#the-iron-law).
+- **Ghost in the machine.** Even in fresh sessions on greenfield code, the pilot's presence forces security-first design patterns — magic-byte validation, constant-time comparison, allowlist-based parsing, output sanitization — *before the first line of feature code is written*.
+
+In short: a scanner tells you what you broke. The pilot makes it harder for the agent to break it in the first place.
+
 ## Why this exists
 
 AI coding assistants are eager to ship fixes. That is the problem. Without discipline, they whack-a-mole vulnerabilities, skip pre-requisite waves, write fix-then-test instead of test-then-fix, and rationalize themselves out of awkward refactors.
@@ -149,6 +159,20 @@ Once that exists, `/sec-audit`, `/sec-fix`, and `/ai-harden` automatically pick 
 ## Versioning
 
 The canonical pilot version is the line in `PILOT.md`'s frontmatter. Bumping the major version means a behavioral change to the Iron Law, the Wave Protocol, or the standards stack. Bumping the minor version means new patterns, footgun rows, or skill additions.
+
+## Roadmap — v3.1: Infrastructure Hardening
+
+v3.0 covers the application layer end-to-end (W1–W4). v3.1 extends the discipline outward to the supply chain and runtime that the application ships into. Three new modules, all citation-backed and Wave-Protocol-aligned:
+
+| Module | Focus | Objective |
+|---|---|---|
+| **Wave 0: Pre-Commit Gating** | Git-Ops | Automated secret-scan and policy-lint *before* the agent can even run `git commit`. Shift-left enforcement — the pilot's discipline applied one layer earlier. |
+| **Wave 5: Container** | Docker / OCI | Non-root enforcement, multi-stage build hardening, base-image pinning by digest, minimal-surface final layers. |
+| **Wave 6: Orchestration** | Kubernetes | RBAC least-privilege checks, secret handling (no plaintext in YAML / Helm values), NetworkPolicy defaults, PodSecurity admission. |
+
+Wave 0 sits *before* W1 in the execution order on purpose: pre-commit gating prevents the most common class of incident (committed secrets) without requiring the agent to reason about anything. W5 and W6 extend the existing W1–W4 application-layer hierarchy outward to the build artifact and the runtime that ships it.
+
+Mappings, footgun rows, and skill bodies for each module will land incrementally on `main` behind the v3.1 milestone.
 
 ## Contributing
 
