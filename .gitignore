@@ -1,0 +1,12 @@
+# Audit reports often contain sensitive details — keep the directory tracked,
+# but ignore the reports themselves by default.
+audits/*
+!audits/.gitkeep
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/

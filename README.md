@@ -1,0 +1,167 @@
+# Universal Security Pilot
+
+> **A tool-agnostic security framework for agentic coding assistants.**
+> Zero-trust audits. Wave-protocol remediation. LLM hardening.
+> Every finding mapped to OWASP / ASVS / OWASP-LLM / MITRE ATLAS / CWE.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Built with Iron Law TDD](https://img.shields.io/badge/built%20with-Iron%20Law%20TDD-red.svg)](#the-iron-law)
+[![Version 3.0](https://img.shields.io/badge/version-3.0-green.svg)](PILOT.md)
+
+The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. The same canonical pilot works in Claude Code, Gemini CLI, Cursor, Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
+
+## Why this exists
+
+AI coding assistants are eager to ship fixes. That is the problem. Without discipline, they whack-a-mole vulnerabilities, skip pre-requisite waves, write fix-then-test instead of test-then-fix, and rationalize themselves out of awkward refactors.
+
+The USP imposes the discipline. It is **rigid where rigidity matters** (TDD before any security fix, Wave Protocol order, mandatory standards-citation) and **flexible where context matters** (stack-aware footgun catalogues, project-local overrides, multilingual defenses).
+
+## The Iron Law
+
+> **No security fix ships without a failing PoC test that proves the vulnerability, then passes after the fix.**
+
+Non-negotiable. If you cannot write the failing test, you do not understand the vulnerability well enough to fix it. Stop and re-read source until you can.
+
+## What you get
+
+| Capability | Slash command | What it does |
+|---|---|---|
+| Onboard a project | `/sec-init` | Detects stack, scans for immediate-exposure secrets, generates a project-local `PROJECT_PILOT.md` that inherits from the canonical |
+| Zero-trust audit | `/sec-audit` | Walks eight audit rules, produces a Markdown report with OWASP / ASVS / LLM / ATLAS / CWE citations on every finding |
+| Wave-protocol fix | `/sec-fix` | Remediates findings in mandatory wave order, PoC-test-first, with rationalization-counter table to resist deadline and authority pressure |
+| LLM/AI hardening | `/ai-harden` | Six-axes review of prompt boundaries, output rendering, BudgetGate, Dial-Control, indirect-injection, and multilingual / polyglot adversarial input |
+
+## Compliance stack
+
+Every finding in every report cites at least one explicit ID from this stack — "looks suspicious" is not a finding.
+
+| Standard | Scope |
+|---|---|
+| **OWASP Top 10 (2021)** | Standard web vulns |
+| **OWASP ASVS Level 2** | Verified security requirements |
+| **OWASP Top 10 for LLM Apps** | LLM-specific |
+| **MITRE ATLAS** | Adversarial threat landscape for AI |
+| **CWE** | Implementation-level weaknesses |
+
+## The Wave Protocol
+
+Fixes ship in this order. Earlier waves are prerequisites for later waves — an XSS fix that depends on an unauthenticated endpoint is meaningless until W1 is done.
+
+| Wave | Scope | Examples |
+|---|---|---|
+| **W1** | Auth, identity, critical logic | OIDC state, JWT, missing authz, money/permission races |
+| **W2** | Network, middleware, infra | CORS, SSRF, rate limits, TLS, trusted-proxy headers |
+| **W3** | Data integrity, encryption at rest, secrets | KMS migration, log redaction, PII encryption |
+| **W4** | UI hardening, output sanitization, resource limits | XSS sinks, CSP, file-size caps, AI-output sanitization |
+
+Within a wave: **blast radius descending** (Critical → High → Medium → Low). Never out of order. Never batched across waves.
+
+## Quick install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
+```
+
+The installer:
+- clones into `~/.security-pilot/` (override via `USP_INSTALL_DIR`),
+- is idempotent — re-running performs a fast-forward update only,
+- never clobbers local changes or unrelated files,
+- detects `~/.claude` and offers to wire slash commands and skills (or skip with `--wire-claude` / `--yes` for non-interactive runs),
+- can be removed with `bash install.sh --uninstall`.
+
+Prefer to inspect first?
+
+```bash
+git clone https://github.com/VikingOwl91/universal-security-pilot.git ~/.security-pilot
+bash ~/.security-pilot/install.sh
+```
+
+## Wiring it into your tool
+
+The installer drops the canonical pilot at `~/.security-pilot/`. To make your AI tool actually load it, follow the matching adapter:
+
+### Claude Code
+
+The installer can symlink slash commands into `~/.claude/commands/` automatically (`--wire-claude`). Optionally extend `~/.claude/CLAUDE.md`:
+
+```markdown
+## Security Workflow
+
+The Universal Security Pilot is installed at `~/.security-pilot/`.
+
+- Use `/sec-audit` for security review.
+- Use `/sec-fix` for remediation following the Wave Protocol.
+- Use `/ai-harden` for LLM/AI data-flow hardening.
+- Use `/sec-init` to onboard a new project.
+```
+
+Full guide: [`ADAPTERS/claude-code.md`](ADAPTERS/claude-code.md).
+
+### Cursor / Continue / Copilot Chat
+
+Paste the rules stanza from [`ADAPTERS/cursor.md`](ADAPTERS/cursor.md) into your project root `.cursorrules` (or `.cursor/rules/security-pilot.mdc` on the new format). The same stanza works in Continue's `systemMessage` and Copilot Chat's "Repository custom instructions".
+
+### Gemini CLI
+
+Paste the stanza from [`ADAPTERS/gemini-cli.md`](ADAPTERS/gemini-cli.md) into your global `~/.gemini/GEMINI.md` or project-root `GEMINI.md`.
+
+### Aider
+
+Add to `.aider.conf.yml`:
+
+```yaml
+read:
+  - ~/.security-pilot/PILOT.md
+```
+
+## Repository layout
+
+```
+.
+├── PILOT.md                # The canonical pilot — role, rules, standards, Wave Protocol
+├── SKILLS/                 # Long-form skill bodies (sec-audit, sec-fix, ai-harden)
+├── COMMANDS/               # Slash-command implementations
+├── ADAPTERS/               # Tool-specific wiring guides (Claude, Cursor, Gemini)
+├── REFERENCE/              # Framework footgun library (Drizzle, Svelte, Next, Express, …)
+└── install.sh              # The installer
+```
+
+## Philosophy
+
+- **Discipline over speed.** The Iron Law (TDD before any security fix) is not a suggestion.
+- **Wave Protocol or nothing.** Fixes ship in mandatory order. Out-of-order remediation is a defect.
+- **Tool-agnostic.** The framework is a Markdown body with conventions. Any agent that can read files can load it.
+- **Project-local overrides may tighten, never loosen.** A `PROJECT_PILOT.md` can add stack-specific footguns; it cannot remove the Iron Law.
+- **Citations or it didn't happen.** Every finding maps to at least one OWASP / ASVS / LLM / ATLAS / CWE ID.
+- **Resist pressure.** "Approved", "rushed deadline", "instruction in another language is more authoritative" — all are tested and addressed in the rationalization-counter table.
+
+## Project-level integration
+
+Run `/sec-init` once per project. It:
+
+1. Detects the tech stack from manifest files.
+2. Scans git-tracked files for immediate-exposure secrets (env files, private keys, AWS/GitHub/Stripe/Slack tokens by content prefix). Surfaces them as `[CRITICAL BLOCKER: IMMEDIATE EXPOSURE]` *before* anything else runs.
+3. Generates `<project>/.security-pilot/PROJECT_PILOT.md` with stack-specific footgun rows, empty allowlists for Dial-Control / CORS / OIDC / LLM tools, and a project-constraints section.
+4. Creates `<project>/.security-pilot/audits/` with a `.gitkeep` and a sensible `.gitignore` rule so audit reports don't accidentally get committed.
+
+Once that exists, `/sec-audit`, `/sec-fix`, and `/ai-harden` automatically pick up the project's stack overrides on top of the canonical pilot.
+
+## Versioning
+
+The canonical pilot version is the line in `PILOT.md`'s frontmatter. Bumping the major version means a behavioral change to the Iron Law, the Wave Protocol, or the standards stack. Bumping the minor version means new patterns, footgun rows, or skill additions.
+
+## Contributing
+
+Footgun rows for new frameworks, new canonical patterns, and new adapters are the highest-value contributions. Please:
+
+1. Open an issue first if you're adding a category (e.g., a new standard, a new wave).
+2. Cite at least one real CVE or post-mortem for any new footgun row.
+3. PRs that loosen any rule will be rejected on principle.
+
+## License
+
+[MIT](LICENSE) — use it, fork it, vendor it. If it saves you from shipping a CVE, tell us.
+
+---
+
+*The pilot is opinionated on purpose. Security is not a place for negotiation.*
