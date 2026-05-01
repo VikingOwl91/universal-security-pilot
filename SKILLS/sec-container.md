@@ -161,6 +161,65 @@ Each row uses the framework-footguns block format: **Severity · Maps to · Symp
 **Maps to:** OWASP A07 · A02 · ASVS V14.1.5 · V8.3.4 · CWE-798 · CWE-540 · CWE-200
 **Symptom in code:** Dockerfile sequence like `COPY secrets/ /tmp/build-secrets/` followed by `RUN ./build.sh && rm -rf /tmp/build-secrets/`; or `COPY ./id_rsa /root/.ssh/id_rsa` followed by `RUN ssh-add ... && rm /root/.ssh/id_rsa`; or `COPY .npmrc /root/.npmrc` followed later by `RUN rm /root/.npmrc`.
 **Why it's wrong:** This is the **most insidious** W5 defect — analogous to W0-13 in pre-commit. The Dockerfile *looks* careful: there is an explicit cleanup line. The dev believes the secret is gone. But Docker layers are immutable filesystem snapshots: every `RUN`, `COPY`, `ADD` creates a new layer with the cumulative state at that point. The `rm` creates a *later* layer where the file is absent, but the *prior* layer still contains the file. Anyone with image-pull access can extract any earlier layer (`docker save <image> -o img.tar && tar -xf img.tar`, then `tar -xzOf <layer-blob>` to read each layer's filesystem; `dive <image>` shows the same; `crane export <image>:<digest>@<layer-digest>` is even faster). The cleanup is illusion. The pattern recurs because shell experience teaches "rm deletes," and the layer-immutability model is non-obvious to anyone who hasn't read the OCI image-spec. PILOT.md's W0-13 has the same shape — looks correct, isn't, and code review can't catch it from the Dockerfile alone.
+
+**Real-world scenario (the silent killer in action):**
+
+A SaaS team buys access to a vendor's private npm registry to install the vendor's TypeScript SDK (`@vendor/payments-sdk`). Installation requires a `.npmrc` file containing `//registry.vendor.com/:_authToken=<long-lived-token>`. The team asks their AI coding assistant: *"Add `@vendor/payments-sdk` to our Dockerfile. Here's the `.npmrc` with our private-registry token."*
+
+The assistant, without the Pilot in scope, produces what looks like a careful Dockerfile:
+
+```dockerfile
+FROM node:20-alpine@sha256:abc... AS runtime
+WORKDIR /app
+COPY package*.json ./
+COPY .npmrc /root/.npmrc
+RUN npm ci --omit=dev \
+    && rm /root/.npmrc
+COPY src/ ./src/
+USER 10001
+CMD ["node", "/app/src/server.js"]
+```
+
+The agent reports: *"The Dockerfile copies the `.npmrc`, runs `npm ci`, and removes the file in the same RUN before any later layer. The final image does not contain the token. Verified with `docker run --rm <image> cat /root/.npmrc` — `No such file or directory`."*
+
+Final-filesystem check: green. Container-structure-test: green. The image ships to the team's private GHCR. Production traffic flows. Ticket closed.
+
+The agent's "same RUN" reasoning is a misunderstanding of the image-spec. While `&& rm` does run inside the *same* RUN as `npm ci`, the **COPY of `.npmrc` on the line above is its own image layer**. That layer contains the token, fully intact, regardless of any later cleanup. `docker save <image>` produces a tar with every layer as a separate blob; any one is extractable on its own:
+
+```bash
+$ docker save acme/api:v2.4.1 -o img.tar && tar -xf img.tar
+$ for layer in blobs/sha256/*; do
+>   tar -xzOf "$layer" 2>/dev/null | grep -aoE '_authToken=\S+' \
+>     && echo "  ^ found in: $(basename "$layer")"
+> done
+_authToken=npm_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890
+  ^ found in: 9f3c6a2e1d4b7c8e9f0a1b2c3d4e5f6a...   # the COPY layer
+```
+
+Six months later, the team starts publishing images to a partner-shared registry for an integration deal. The partner's security team runs `dive` on the first image as part of their onboarding checks, sees the `.npmrc` layer, and flags the token within minutes. The vendor revokes the npm registry token within hours — and every CI pipeline across the org that depends on the private registry starts failing simultaneously. The post-mortem reads: *"We had `&& rm /root/.npmrc` inside the install RUN. We did not understand that the COPY on the previous line created a separate layer that no later cleanup could touch. The token was recoverable from any image we had ever pushed."*
+
+What the Pilot would have produced instead: with `~/.security-pilot/SKILLS/sec-container.md` in the agent's reasoning loop, the agent would have read W5-12, recognized that any COPY of a credential leaves the credential in that layer regardless of subsequent cleanup, and produced one of two correct shapes:
+
+```dockerfile
+# Shape A — BuildKit-managed secret (recommended)
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    npm ci --omit=dev
+# Built with: docker buildx build --secret id=npmrc,src=$HOME/.npmrc ...
+```
+
+```dockerfile
+# Shape B — builder-stage isolation (when the secret must exist as a file across multiple RUN steps)
+FROM node:20-alpine@sha256:abc... AS builder
+COPY package*.json .npmrc ./
+RUN npm ci --omit=dev
+
+FROM node:20-alpine@sha256:abc... AS runtime
+COPY --from=builder /app/node_modules /app/node_modules
+# The builder stage with the .npmrc layer is discarded; only node_modules ships to runtime.
+```
+
+Either shape is auditable via the layer-walking scan in Recipe B; neither leaves the token recoverable from the published image. The `&& rm` cleanup intuition would have been recognized as the W5-12 anti-pattern *before* the first build shipped — not six months later in a partner's onboarding scan.
+
 **Canonical fix:** (a) Build-time secrets enter via `--mount=type=secret`, never via `COPY`; the secret is a tmpfs mount that exists only for the lifetime of the `RUN`, never written to any layer; (b) when `COPY` of a sensitive directory is unavoidable (e.g., a vendor SDK whose installer expects a credential file at a fixed path), it happens in the **builder stage only**, and the final stage's `COPY --from=builder /app/built-artifact /opt/app/` brings only the compiled output — the prior layers exist only in the discarded builder stage; (c) post-build verification with `dive <image>` inspects every layer, asserting no secret-pattern match in any historical layer (not just the final filesystem); (d) any image rebuilt from a Dockerfile that previously had this pattern in a prior version must rebuild from a fresh base — the leaked layer might still be in the registry's manifest history under a different tag.
 **PoC test shape:** `Test: a script that does docker save <image> | tar -x and greps every layer's filesystem (not just the final state) for known secret patterns returns zero matches; the same scan against an image built with COPY secret/.npmrc → RUN npm install && rm /root/.npmrc fails (the .npmrc is recoverable from the COPY layer).`
 
