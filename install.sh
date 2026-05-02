@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -33,6 +33,7 @@ WIRE_CLAUDE=0
 WIRE_GEMINI_CLI=0
 WIRE_CURSOR=0
 WIRE_CURSOR_HOOKS=0
+WIRE_CODEX_CLI=0
 ASSUME_YES=0
 UNINSTALL=0
 
@@ -48,6 +49,7 @@ Options:
   --wire-cursor         Symlink slash commands into ~/.cursor/commands (backs up existing files)
   --wire-cursor-hooks   Install agent hooks into ~/.cursor/hooks/ + ~/.cursor/hooks.json (opt-in only;
                         modifies global Cursor agent behavior. Backs up an existing hooks.json)
+  --wire-codex-cli      Symlink custom prompts and skills into ~/.codex/prompts and ~/.codex/skills
   --yes, -y             Skip interactive prompts (assume yes)
   --uninstall           Remove the installation and any symlinks it created
   -h, --help            Show this help
@@ -65,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --wire-gemini-cli)   WIRE_GEMINI_CLI=1 ;;
     --wire-cursor)       WIRE_CURSOR=1 ;;
     --wire-cursor-hooks) WIRE_CURSOR_HOOKS=1 ;;
+    --wire-codex-cli)    WIRE_CODEX_CLI=1 ;;
     --yes|-y)            ASSUME_YES=1 ;;
     --uninstall)         UNINSTALL=1 ;;
     -h|--help)           usage; exit 0 ;;
@@ -132,6 +135,33 @@ remove_gemini_cli_symlinks() {
   done
 }
 
+remove_codex_cli_symlinks() {
+  local pdir="$HOME/.codex/prompts"
+  local sdir="$HOME/.codex/skills"
+  local name target link_dest
+  if [[ -d "$pdir" ]]; then
+    for name in sec-init sec-audit sec-fix ai-harden; do
+      target="$pdir/${name}.md"
+      [[ -L "$target" ]] || continue
+      link_dest="$(readlink "$target" 2>/dev/null || true)"
+      if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/codex-cli/prompts/${name}.md" ]]; then
+        rm -f "$target" && ok "Removed symlink $target"
+      fi
+    done
+  fi
+  if [[ -d "$sdir" ]]; then
+    for name in sec-audit sec-fix ai-harden; do
+      target="$sdir/${name}/SKILL.md"
+      [[ -L "$target" ]] || continue
+      link_dest="$(readlink "$target" 2>/dev/null || true)"
+      if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/codex-cli/skills/${name}/SKILL.md" ]]; then
+        rm -f "$target" && ok "Removed symlink $target"
+        rmdir "$sdir/${name}" 2>/dev/null || true
+      fi
+    done
+  fi
+}
+
 remove_cursor_symlinks() {
   local cdir="$HOME/.cursor/commands"
   local hdir="$HOME/.cursor/hooks"
@@ -168,6 +198,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   log "Uninstalling Universal Security Pilot..."
   remove_claude_symlinks
   remove_gemini_cli_symlinks
+  remove_codex_cli_symlinks
   remove_cursor_symlinks
   if [[ -d "$INSTALL_DIR" ]]; then
     if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -241,6 +272,14 @@ REQUIRED_FILES=(
   "ADAPTERS/cursor/hooks/usp-redact-secrets.sh"
   "ADAPTERS/cursor/hooks/usp-block-dangerous-shell.sh"
   "ADAPTERS/cursor/hooks/usp-mcp-dial-control.sh"
+  "ADAPTERS/codex-cli.md"
+  "ADAPTERS/codex-cli/prompts/sec-init.md"
+  "ADAPTERS/codex-cli/prompts/sec-audit.md"
+  "ADAPTERS/codex-cli/prompts/sec-fix.md"
+  "ADAPTERS/codex-cli/prompts/ai-harden.md"
+  "ADAPTERS/codex-cli/skills/sec-audit/SKILL.md"
+  "ADAPTERS/codex-cli/skills/sec-fix/SKILL.md"
+  "ADAPTERS/codex-cli/skills/ai-harden/SKILL.md"
   "REFERENCE/framework-footguns.md"
 )
 for f in "${REQUIRED_FILES[@]}"; do
@@ -439,6 +478,50 @@ if [[ "$WIRE_CURSOR_HOOKS" -eq 1 ]]; then
   wire_cursor_hooks
 fi
 
+# --- Optional: wire Codex CLI custom prompts and skills ---------------------
+
+wire_codex_cli() {
+  if [[ ! -d "$HOME/.codex" ]]; then
+    # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
+    warn "~/.codex not found — skipping Codex CLI wiring (is Codex CLI installed?)."
+    return 0
+  fi
+  local pdir="$HOME/.codex/prompts"
+  local sdir="$HOME/.codex/skills"
+  mkdir -p "$pdir" "$sdir"
+
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    link_one "$INSTALL_DIR/ADAPTERS/codex-cli/prompts/${name}.md" "$pdir/${name}.md" "/prompts:$name"
+  done
+  for name in sec-audit sec-fix ai-harden; do
+    mkdir -p "$sdir/${name}"
+    link_one "$INSTALL_DIR/ADAPTERS/codex-cli/skills/${name}/SKILL.md" "$sdir/${name}/SKILL.md" "skill:\$$name"
+  done
+
+  log ""
+  log "Note: Codex CLI loads custom prompts only at startup — restart Codex to surface"
+  log "the new /prompts:* commands. Skills auto-discover."
+}
+
+if [[ "$WIRE_CODEX_CLI" -eq 1 ]]; then
+  wire_codex_cli
+elif [[ -d "$HOME/.codex" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    wire_codex_cli
+  elif [[ -t 0 && -t 1 ]]; then
+    read -r -p "Detected ~/.codex — wire custom prompts and skills into Codex CLI? [y/N] " ans
+    case "$ans" in
+      [yY]|[yY][eE][sS]) wire_codex_cli ;;
+      *) log "(skipped — re-run with --wire-codex-cli to enable later)" ;;
+    esac
+  else
+    log ""
+    log "Detected ~/.codex. To wire Codex CLI prompts and skills, re-run with:"
+    log "  bash $INSTALL_DIR/install.sh --wire-codex-cli"
+  fi
+fi
+
 # --- Done -------------------------------------------------------------------
 
 log ""
@@ -448,6 +531,7 @@ log "${C_BLU}Next steps${C_RST}"
 log "  • Claude Code:  $INSTALL_DIR/ADAPTERS/claude-code.md"
 log "  • Cursor:       $INSTALL_DIR/ADAPTERS/cursor.md"
 log "  • Gemini CLI:   $INSTALL_DIR/ADAPTERS/gemini-cli.md"
+log "  • Codex CLI:    $INSTALL_DIR/ADAPTERS/codex-cli.md"
 log ""
 log "Onboard a project: cd <project> && (your AI tool) → /sec-init"
 log "Run an audit:      /sec-audit"
