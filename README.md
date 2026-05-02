@@ -8,7 +8,7 @@
 [![Built with Iron Law TDD](https://img.shields.io/badge/built%20with-Iron%20Law%20TDD-red.svg)](#the-iron-law)
 [![Version 3.0](https://img.shields.io/badge/version-3.0-green.svg)](PILOT.md)
 
-The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. The same canonical pilot works in Claude Code, Gemini CLI, Cursor, Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
+The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. First-class adapters ship for **Claude Code, Cursor, Gemini CLI, and Codex CLI**; the same canonical pilot also works in Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
 
 ## 🛡️ Proactive by Design (not just a scanner)
 
@@ -76,8 +76,8 @@ The installer:
 - clones into `~/.security-pilot/` (override via `USP_INSTALL_DIR`),
 - is idempotent — re-running performs a fast-forward update only,
 - never clobbers local changes or unrelated files,
-- detects `~/.claude` and offers to wire slash commands and skills (or skip with `--wire-claude` / `--yes` for non-interactive runs),
-- can be removed with `bash install.sh --uninstall`.
+- detects each supported tool directory (`~/.claude`, `~/.cursor`, `~/.gemini`, `~/.codex`) and offers wiring interactively. Pre-set the matching flag (`--wire-claude`, `--wire-cursor`, `--wire-cursor-hooks`, `--wire-gemini-cli`, `--wire-codex-cli`) to skip the prompt; `--yes` accepts every detected wiring,
+- can be removed with `bash install.sh --uninstall` (leaves user-customized files like `~/.cursor/hooks.json` in place).
 
 Prefer to inspect first?
 
@@ -88,41 +88,47 @@ bash ~/.security-pilot/install.sh
 
 ## Wiring it into your tool
 
-The installer drops the canonical pilot at `~/.security-pilot/`. To make your AI tool actually load it, follow the matching adapter:
+The installer drops the canonical pilot at `~/.security-pilot/`. Four major coding-agent CLIs have first-class adapters with installer wiring; everything else is a paste-in stanza.
 
-### Claude Code
+### Tools with installer-wired adapters
 
-The installer can symlink slash commands into `~/.claude/commands/` automatically (`--wire-claude`). Optionally extend `~/.claude/CLAUDE.md`:
+| Tool | Wire flag | What gets installed | Adapter doc |
+|---|---|---|---|
+| **Claude Code** | `--wire-claude` | Slash commands → `~/.claude/commands/`; skills → `~/.claude/skills/` (direct symlinks to canonical `COMMANDS/*.md` and `SKILLS/*.md`) | [`ADAPTERS/claude-code.md`](ADAPTERS/claude-code.md) |
+| **Cursor** (commands) | `--wire-cursor` | Slash commands → `~/.cursor/commands/` (direct symlinks to canonical `COMMANDS/*.md`) | [`ADAPTERS/cursor.md`](ADAPTERS/cursor.md) |
+| **Cursor** (hooks) | `--wire-cursor-hooks` | Agent-hook scripts → `~/.cursor/hooks/`; `hooks.json` → `~/.cursor/`. **Policy enforcement** — denies `rm -rf /` / `curl\|sh` / fork bombs, redacts files containing credentials, and enforces the Dial-Control egress allowlist on MCP tool calls. **Opt-in only** — modifies global Cursor agent behavior. Requires `jq`. Backs up an existing `hooks.json` before overwriting | same |
+| **Gemini CLI** | `--wire-gemini-cli` | TOML custom commands → `~/.gemini/commands/` (thin bootstraps that read canonical `COMMANDS/*.md` at invocation) | [`ADAPTERS/gemini-cli.md`](ADAPTERS/gemini-cli.md) |
+| **Codex CLI** | `--wire-codex-cli` | Custom prompts → `~/.codex/prompts/`; auto-discovered skills → `~/.codex/skills/<name>/SKILL.md` | [`ADAPTERS/codex-cli.md`](ADAPTERS/codex-cli.md) |
 
-```markdown
-## Security Workflow
+When the installer detects one of those tool directories it offers wiring interactively. Single source of truth stays in `COMMANDS/*.md` and `SKILLS/*.md` — every adapter reads from there at invocation time, so updates flow automatically.
 
-The Universal Security Pilot is installed at `~/.security-pilot/`.
+### Invocation conventions
 
-- Use `/sec-audit` for security review.
-- Use `/sec-fix` for remediation following the Wave Protocol.
-- Use `/ai-harden` for LLM/AI data-flow hardening.
-- Use `/sec-init` to onboard a new project.
-```
+Slash-command surface and namespacing differ by tool. The action is the same.
 
-Full guide: [`ADAPTERS/claude-code.md`](ADAPTERS/claude-code.md).
+| Action | Claude Code / Cursor | Gemini CLI | Codex CLI |
+|---|---|---|---|
+| Onboard project | `/sec-init` | `/sec-init` | `/prompts:sec-init` |
+| Run audit | `/sec-audit [scope]` | `/sec-audit [scope]` | `/prompts:sec-audit [scope]`  •  `$sec-audit [scope]` |
+| Remediate | `/sec-fix [report]` | `/sec-fix [report]` | `/prompts:sec-fix [report]`  •  `$sec-fix [report]` |
+| Harden LLM | `/ai-harden [scope]` | `/ai-harden [scope]` | `/prompts:ai-harden [scope]`  •  `$ai-harden [scope]` |
 
-### Cursor / Continue / Copilot Chat
+Codex's `/prompts:` prefix is a tool-wide convention, not a USP choice. The `$<name>` form invokes the auto-discovered skill instead.
 
-Paste the rules stanza from [`ADAPTERS/cursor.md`](ADAPTERS/cursor.md) into your project root `.cursorrules` (or `.cursor/rules/security-pilot.mdc` on the new format). The same stanza works in Continue's `systemMessage` and Copilot Chat's "Repository custom instructions".
+### Stanza-only tools (no installer wiring)
 
-### Gemini CLI
+These tools have a system-prompt / rules surface but no slash-command or hook surface. Paste the matching stanza:
 
-Paste the stanza from [`ADAPTERS/gemini-cli.md`](ADAPTERS/gemini-cli.md) into your global `~/.gemini/GEMINI.md` or project-root `GEMINI.md`.
+- **Continue (continue.dev)** — `config.json` `systemMessage` field. Stanza in [`ADAPTERS/cursor.md`](ADAPTERS/cursor.md) (Equivalents section).
+- **Copilot Chat** — Repository custom instructions via GitHub repo settings. Same stanza.
+- **Aider** — `.aider.conf.yml`:
 
-### Aider
+  ```yaml
+  read:
+    - ~/.security-pilot/PILOT.md
+  ```
 
-Add to `.aider.conf.yml`:
-
-```yaml
-read:
-  - ~/.security-pilot/PILOT.md
-```
+For Claude Code, Cursor, Gemini CLI, and Codex CLI you can additionally paste the matching memory-file stanza (`CLAUDE.md`, `.cursorrules`, `GEMINI.md`, `AGENTS.md`) for autonomous trigger detection on top of the explicit slash commands. See each adapter doc for the stanza.
 
 ## Repository layout
 
@@ -131,7 +137,14 @@ read:
 ├── PILOT.md                # The canonical pilot — role, rules, standards, Wave Protocol
 ├── SKILLS/                 # Long-form skill bodies (sec-audit, sec-fix, ai-harden)
 ├── COMMANDS/               # Slash-command implementations
-├── ADAPTERS/               # Tool-specific wiring guides (Claude, Cursor, Gemini)
+├── ADAPTERS/               # Tool-specific wiring
+│   ├── claude-code.md      #   Claude Code (commands + skills)
+│   ├── cursor.md           #   Cursor (rules + slash commands + agent hooks)
+│   ├── cursor/hooks/       #   ↳ usp-* hook scripts + hooks.json
+│   ├── gemini-cli.md       #   Gemini CLI (TOML custom commands)
+│   ├── gemini-cli/         #   ↳ TOML wrappers
+│   ├── codex-cli.md        #   Codex CLI (custom prompts + skills)
+│   └── codex-cli/          #   ↳ prompt + SKILL.md wrappers
 ├── REFERENCE/              # Framework footgun library (Drizzle, Svelte, Next, Express, …)
 └── install.sh              # The installer
 ```
