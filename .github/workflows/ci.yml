@@ -1,0 +1,98 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: bash syntax — install.sh
+        run: bash -n install.sh
+
+      - name: shellcheck — install.sh
+        run: shellcheck install.sh
+
+      - name: bash syntax — Cursor hook scripts
+        run: |
+          set -e
+          for f in ADAPTERS/cursor/hooks/*.sh; do
+            echo "  bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: shellcheck — Cursor hook scripts
+        run: shellcheck ADAPTERS/cursor/hooks/*.sh
+
+      - name: validate Gemini CLI TOML prompts parse
+        run: |
+          set -e
+          for f in ADAPTERS/gemini-cli/commands/*.toml; do
+            echo "  parse $f"
+            python3 -c "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb'))" "$f"
+          done
+
+      - name: validate Cursor hooks.json is valid JSON
+        run: python3 -c "import json; json.load(open('ADAPTERS/cursor/hooks/hooks.json'))"
+
+      - name: validate Codex CLI SKILL.md frontmatter
+        run: |
+          set -e
+          for f in ADAPTERS/codex-cli/skills/*/SKILL.md; do
+            echo "  frontmatter check $f"
+            head -1 "$f" | grep -qx -- '---' \
+              || { echo "::error file=$f::missing '---' frontmatter opener on line 1"; exit 1; }
+            grep -q '^name: ' "$f" \
+              || { echo "::error file=$f::missing 'name:' field in frontmatter"; exit 1; }
+            grep -q '^description: ' "$f" \
+              || { echo "::error file=$f::missing 'description:' field in frontmatter"; exit 1; }
+          done
+
+      - name: required canonical files present
+        run: |
+          set -e
+          required=(
+            PILOT.md
+            README.md
+            install.sh
+            SKILLS/sec-audit.md
+            SKILLS/sec-fix.md
+            SKILLS/ai-harden.md
+            COMMANDS/sec-init.md
+            COMMANDS/sec-audit.md
+            COMMANDS/sec-fix.md
+            COMMANDS/ai-harden.md
+            ADAPTERS/claude-code.md
+            ADAPTERS/cursor.md
+            ADAPTERS/gemini-cli.md
+            ADAPTERS/codex-cli.md
+            ADAPTERS/claude-code/stanza.md
+            ADAPTERS/cursor/stanza.md
+            ADAPTERS/gemini-cli/stanza.md
+            ADAPTERS/codex-cli/stanza.md
+            REFERENCE/framework-footguns.md
+          )
+          for f in "${required[@]}"; do
+            [ -f "$f" ] || { echo "::error file=$f::missing required canonical file"; exit 1; }
+          done
+          echo "✓ ${#required[@]} canonical files present"
+
+      - name: wire flags in README match install.sh
+        run: |
+          set -e
+          readme_flags=$(grep -oE -- '--wire-[a-z-]+' README.md | sort -u)
+          install_flags=$(grep -oE -- '--wire-[a-z-]+' install.sh | sort -u)
+          if [ "$readme_flags" != "$install_flags" ]; then
+            echo "::error::Wire flags in README.md and install.sh diverge"
+            diff <(echo "$readme_flags") <(echo "$install_flags") || true
+            exit 1
+          fi
+          echo "✓ wire-flag set is consistent across README and installer"
