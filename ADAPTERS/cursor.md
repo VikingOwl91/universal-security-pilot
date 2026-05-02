@@ -1,18 +1,25 @@
 # Cursor Adapter
 
-Wires the Universal Security Pilot into Cursor (and adjacent IDE-embedded AI tools like Continue, Copilot Chat where they support project rule files).
+Wires the Universal Security Pilot into Cursor across all three of Cursor's extension surfaces:
 
-## Approach
-
-Cursor reads `.cursorrules` (or the newer `.cursor/rules/*.mdc`) at the project root for system-prompt injection. There is no skill registry, no slash commands native to the rules system — instructions in the rules file shape every interaction with the embedded model.
+1. **Rules** (`.cursorrules` / `.cursor/rules/*.mdc`) — system-prompt injection. Autonomous trigger detection.
+2. **Slash commands** (`.cursor/commands/*.md`) — explicit `/sec-init`, `/sec-audit`, `/sec-fix`, `/ai-harden` invocations. See [Cursor docs](https://cursor.com/docs/agent/chat/commands) and the [hamzafer/cursor-commands](https://github.com/hamzafer/cursor-commands) catalogue.
+3. **Agent hooks** (`~/.cursor/hooks.json` + scripts in `~/.cursor/hooks/`) — JSON-over-stdio policy hooks that fire on agent events. **This is what turns USP from advisory rules into actually-enforcing guardrails** — hooks can deny dangerous shell commands, block reads of files containing credentials, and enforce the Dial-Control egress allowlist on MCP tool calls. See [Cursor docs](https://cursor.com/docs/agent/hooks) and [hamzafer/cursor-hooks](https://github.com/hamzafer/cursor-hooks) for the protocol.
 
 ## What gets installed
 
 | Path | Purpose |
 |---|---|
-| `<project>/.cursorrules` (legacy) or `<project>/.cursor/rules/security-pilot.mdc` (current) | Rules file referencing the canonical USP |
+| `<project>/.cursorrules` (legacy) or `<project>/.cursor/rules/security-pilot.mdc` | System-prompt rules — autonomous trigger detection |
+| `~/.cursor/commands/{sec-init,sec-audit,sec-fix,ai-harden}.md` | Slash commands (symlinks to canonical `~/.security-pilot/COMMANDS/*.md`) |
+| `~/.cursor/hooks/usp-*.sh` | Agent-hook scripts (symlinks to `~/.security-pilot/ADAPTERS/cursor/hooks/*.sh`) |
+| `~/.cursor/hooks.json` | Hook configuration (real copy — the installer backs up an existing one before writing) |
 
-## .cursorrules stanza (paste into project-root `.cursorrules`)
+---
+
+## Layer 1 — Rules (system-prompt injection)
+
+Paste this stanza into your project-root `.cursorrules` (or `.cursor/rules/security-pilot.mdc`). It's independent of the slash commands and the hooks; it gives Cursor's model the context to recognize security-relevant code without an explicit invocation.
 
 ```markdown
 # Universal Security Pilot — Cursor binding
@@ -43,22 +50,99 @@ The Universal Security Pilot v3.0 is installed at `~/.security-pilot/`. For any 
 - Generic-capability LLM tools (raw `fetch_url`, raw `shell_exec`) without a Dial-Control / capability-minimization layer.
 - React's raw-HTML escape hatch on AI-generated content (use DOMPurify or render as text).
 
-## When the user invokes a slash-command-shaped phrase
+## Slash commands (when installed)
 
-| User says | Action |
-|---|---|
-| "sec-audit" | Apply `~/.security-pilot/SKILLS/sec-audit.md`. Output to `<project>/.security-pilot/audits/<DATE>-<scope>.md`. |
-| "sec-fix" | Apply `~/.security-pilot/SKILLS/sec-fix.md`. Wave-order, PoC-first, one-PR-per-finding. |
-| "ai-harden" | Apply `~/.security-pilot/SKILLS/ai-harden.md`. Six-axes including multilingual. |
-| "sec-init" | Apply `~/.security-pilot/COMMANDS/sec-init.md`. Detect stack, generate PROJECT_PILOT.md. |
+If the USP slash commands are wired (`bash ~/.security-pilot/install.sh --wire-cursor`), prefer the explicit invocation: `/sec-init`, `/sec-audit`, `/sec-fix`, `/ai-harden`. Each loads the corresponding `~/.security-pilot/COMMANDS/<name>.md` directly.
 ```
 
-## Equivalents in adjacent tools
+---
 
-- **Continue (continue.dev)** — the `config.json` `systemMessage` field accepts the same stanza; or use `.continuerules` if present.
-- **Copilot Chat (custom instructions)** — paste the stanza into "Repository custom instructions" via the GitHub repo settings. Same triggers, same rules.
+## Layer 2 — Slash commands
+
+Identical structure to Claude Code: drop a markdown file in `~/.cursor/commands/` (global) or `<project>/.cursor/commands/` (project-local; project wins on collision). Type `/` in Cursor's chat to surface them.
+
+USP ships four, all symlinked from the canonical `~/.security-pilot/COMMANDS/*.md`:
+
+| Command | Source | Purpose |
+|---|---|---|
+| `/sec-init`   | `~/.security-pilot/COMMANDS/sec-init.md`   | Onboard a project — stack detection, `PROJECT_PILOT.md`, immediate-exposure scan |
+| `/sec-audit`  | `~/.security-pilot/COMMANDS/sec-audit.md`  | Run a zero-trust security audit (OWASP / ASVS / LLM / ATLAS / CWE-mapped) |
+| `/sec-fix`    | `~/.security-pilot/COMMANDS/sec-fix.md`    | Remediate findings (Wave Protocol + Iron Law) |
+| `/ai-harden`  | `~/.security-pilot/COMMANDS/ai-harden.md`  | Audit / harden LLM data flows (OWASP LLM Top 10, MITRE ATLAS, multilingual) |
+
+### Install
+
+```bash
+bash ~/.security-pilot/install.sh --wire-cursor
+```
+
+Or, if Cursor is detected (`~/.cursor/` exists), the installer offers to wire commands interactively. Manual:
+
+```bash
+mkdir -p ~/.cursor/commands
+ln -s ~/.security-pilot/COMMANDS/sec-init.md   ~/.cursor/commands/sec-init.md
+ln -s ~/.security-pilot/COMMANDS/sec-audit.md  ~/.cursor/commands/sec-audit.md
+ln -s ~/.security-pilot/COMMANDS/sec-fix.md    ~/.cursor/commands/sec-fix.md
+ln -s ~/.security-pilot/COMMANDS/ai-harden.md  ~/.cursor/commands/ai-harden.md
+```
+
+---
+
+## Layer 3 — Agent hooks (policy-as-code)
+
+Hooks are JSON-over-stdio scripts that fire as Cursor's agent works. They can `allow`, `ask`, or `deny`. This is the layer where USP stops being advisory and starts enforcing.
+
+USP ships four hook scripts:
+
+| Hook script | Events | Decision |
+|---|---|---|
+| `usp-audit.sh` | `beforeShellExecution`, `beforeMCPExecution`, `beforeSubmitPrompt`, `stop` | Always `allow`. Appends each payload to `<project>/.security-pilot/audit-trail.log` (or `~/.security-pilot/audit-trail.log` when no project root). Observability only |
+| `usp-redact-secrets.sh` | `beforeReadFile` | `deny` (exit 3) when file content matches USP's credential prefix list: AKIA/ASIA (AWS), AIza (Google), ghp_/gho_/ghs_ (GitHub), xox[abps]- (Slack), sk_live_/sk_test_ (Stripe), JWT shape, PEM private-key headers. Otherwise `allow` |
+| `usp-block-dangerous-shell.sh` | `beforeShellExecution` | `deny` for `rm -rf /` / `rm -rf /*` / `rm -rf ~` / `rm -rf $HOME`, `curl\|sh`, `wget\|sh`, `chmod 777`, fork bombs, `dd of=/dev/sd*`. `ask` for `git filter-branch` / `git filter-repo`, force pushes, `git reset --hard`, cloud-auth commands (`aws configure`, `gcloud auth`, `kubectl config`, `docker login`), and any command touching `.aws/credentials` / `.kube/config` / `.ssh/id_*`. Otherwise `allow` |
+| `usp-mcp-dial-control.sh` | `beforeMCPExecution` | Reads the HTTP egress allowlist line from `<project>/.security-pilot/PROJECT_PILOT.md`. Progressive enforcement: empty allowlist → `allow` (educational; the audit hook still records the call). Populated allowlist + URL substring match → `allow`. Populated + miss → `ask`. No URL-shaped argument in the MCP payload → `allow` (not an HTTP egress call by our heuristic) |
+
+The Dial-Control progression maps to the natural USP onboarding: `/sec-init` creates an empty allowlist, `/ai-harden` helps you populate it, and from that point on the hook becomes real enforcement.
+
+### Install
+
+```bash
+bash ~/.security-pilot/install.sh --wire-cursor-hooks
+```
+
+Hooks are a **separate, opt-in flag** — they change Cursor's agent behavior globally, and a malformed hook can wedge the agent loop. Re-test in Cursor after installing. The installer:
+
+- Symlinks each `usp-*.sh` into `~/.cursor/hooks/` (so updates to USP propagate).
+- Writes `~/.cursor/hooks.json` as a **real file copy** (so you can merge in your own hooks). If one already exists, it's backed up to `~/.cursor/hooks.json.bak.<ts>` first.
+- Reminds you to restart Cursor afterwards.
+
+To merge custom hooks: edit `~/.cursor/hooks.json` directly (it's a real file, not a symlink). The reference USP version stays at `~/.security-pilot/ADAPTERS/cursor/hooks/hooks.json` if you need to diff.
+
+### Requirements
+
+Hook scripts call `jq` to parse Cursor's JSON payloads. Install it via your package manager.
+
+### Audit log hygiene
+
+The audit log is per-project by default. Add this to your project's `.gitignore`:
+
+```gitignore
+.security-pilot/audit-trail.log
+```
+
+It captures every shell, MCP, and prompt-submit payload Cursor's agent fires — useful for post-hoc forensic review, never useful in version control.
+
+---
+
+## Equivalents in adjacent tools (no slash-command / hooks surface)
+
+- **Continue (continue.dev)** — the `config.json` `systemMessage` field accepts the Layer 1 stanza; or use `.continuerules` if present.
+- **Copilot Chat (custom instructions)** — paste the Layer 1 stanza into "Repository custom instructions" via the GitHub repo settings. Same triggers, same rules.
 - **Aider** — use `.aider.conf.yml` `read:` array to auto-include `~/.security-pilot/PILOT.md` in every session.
+
+These tools don't expose a hook surface, so the policy-as-code Layer 3 is Cursor-specific for now.
+
+---
 
 ## Project-level integration
 
-The `.cursorrules` reference resolves the canonical PILOT.md path at every interaction. Once `/sec-init` has been run, the rules file's reference to `<project>/.security-pilot/PROJECT_PILOT.md` becomes live — the project overrides apply automatically thereafter.
+The `.cursorrules` reference resolves the canonical PILOT.md path on every interaction. Once `/sec-init` has been run, the rules-file reference to `<project>/.security-pilot/PROJECT_PILOT.md` becomes live — project overrides apply automatically thereafter, *and* the Dial-Control hook starts reading the project's HTTP egress allowlist from that file.

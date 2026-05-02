@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -31,6 +31,8 @@ trap 'err "Installer aborted on line $LINENO."' ERR
 
 WIRE_CLAUDE=0
 WIRE_GEMINI_CLI=0
+WIRE_CURSOR=0
+WIRE_CURSOR_HOOKS=0
 ASSUME_YES=0
 UNINSTALL=0
 
@@ -41,11 +43,14 @@ Universal Security Pilot — installer
 Usage: install.sh [options]
 
 Options:
-  --wire-claude       Symlink slash commands into ~/.claude/commands (backs up existing files)
-  --wire-gemini-cli   Symlink TOML custom commands into ~/.gemini/commands (backs up existing files)
-  --yes, -y           Skip interactive prompts (assume yes)
-  --uninstall         Remove the installation and any symlinks it created
-  -h, --help          Show this help
+  --wire-claude         Symlink slash commands into ~/.claude/commands (backs up existing files)
+  --wire-gemini-cli     Symlink TOML custom commands into ~/.gemini/commands (backs up existing files)
+  --wire-cursor         Symlink slash commands into ~/.cursor/commands (backs up existing files)
+  --wire-cursor-hooks   Install agent hooks into ~/.cursor/hooks/ + ~/.cursor/hooks.json (opt-in only;
+                        modifies global Cursor agent behavior. Backs up an existing hooks.json)
+  --yes, -y             Skip interactive prompts (assume yes)
+  --uninstall           Remove the installation and any symlinks it created
+  -h, --help            Show this help
 
 Environment:
   USP_INSTALL_DIR  Override install path (default: \$HOME/.security-pilot)
@@ -56,11 +61,13 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --wire-claude)     WIRE_CLAUDE=1 ;;
-    --wire-gemini-cli) WIRE_GEMINI_CLI=1 ;;
-    --yes|-y)          ASSUME_YES=1 ;;
-    --uninstall)       UNINSTALL=1 ;;
-    -h|--help)         usage; exit 0 ;;
+    --wire-claude)       WIRE_CLAUDE=1 ;;
+    --wire-gemini-cli)   WIRE_GEMINI_CLI=1 ;;
+    --wire-cursor)       WIRE_CURSOR=1 ;;
+    --wire-cursor-hooks) WIRE_CURSOR_HOOKS=1 ;;
+    --yes|-y)            ASSUME_YES=1 ;;
+    --uninstall)         UNINSTALL=1 ;;
+    -h|--help)           usage; exit 0 ;;
     *) die "Unknown option: $1 (use --help)" ;;
   esac
   shift
@@ -125,10 +132,43 @@ remove_gemini_cli_symlinks() {
   done
 }
 
+remove_cursor_symlinks() {
+  local cdir="$HOME/.cursor/commands"
+  local hdir="$HOME/.cursor/hooks"
+  local name target link_dest
+  if [[ -d "$cdir" ]]; then
+    for name in sec-init sec-audit sec-fix ai-harden; do
+      target="$cdir/${name}.md"
+      [[ -L "$target" ]] || continue
+      link_dest="$(readlink "$target" 2>/dev/null || true)"
+      if [[ "$link_dest" == "$INSTALL_DIR/COMMANDS/${name}.md" ]]; then
+        rm -f "$target" && ok "Removed symlink $target"
+      fi
+    done
+  fi
+  if [[ -d "$hdir" ]]; then
+    for name in usp-audit usp-redact-secrets usp-block-dangerous-shell usp-mcp-dial-control; do
+      target="$hdir/${name}.sh"
+      [[ -L "$target" ]] || continue
+      link_dest="$(readlink "$target" 2>/dev/null || true)"
+      if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/cursor/hooks/${name}.sh" ]]; then
+        rm -f "$target" && ok "Removed symlink $target"
+      fi
+    done
+  fi
+  # ~/.cursor/hooks.json is intentionally left in place — it's a real file
+  # the user may have customized after USP wrote it. They can remove it manually.
+  if [[ -f "$HOME/.cursor/hooks.json" ]]; then
+    # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
+    warn "~/.cursor/hooks.json left in place (may have user customizations). Remove manually if no longer needed."
+  fi
+}
+
 if [[ "$UNINSTALL" -eq 1 ]]; then
   log "Uninstalling Universal Security Pilot..."
   remove_claude_symlinks
   remove_gemini_cli_symlinks
+  remove_cursor_symlinks
   if [[ -d "$INSTALL_DIR" ]]; then
     if [[ -d "$INSTALL_DIR/.git" ]]; then
       rm -rf "$INSTALL_DIR" && ok "Removed $INSTALL_DIR"
@@ -196,6 +236,11 @@ REQUIRED_FILES=(
   "ADAPTERS/gemini-cli/commands/sec-audit.toml"
   "ADAPTERS/gemini-cli/commands/sec-fix.toml"
   "ADAPTERS/gemini-cli/commands/ai-harden.toml"
+  "ADAPTERS/cursor/hooks/hooks.json"
+  "ADAPTERS/cursor/hooks/usp-audit.sh"
+  "ADAPTERS/cursor/hooks/usp-redact-secrets.sh"
+  "ADAPTERS/cursor/hooks/usp-block-dangerous-shell.sh"
+  "ADAPTERS/cursor/hooks/usp-mcp-dial-control.sh"
   "REFERENCE/framework-footguns.md"
 )
 for f in "${REQUIRED_FILES[@]}"; do
@@ -304,6 +349,94 @@ elif [[ -d "$HOME/.gemini" ]]; then
     log "Detected ~/.gemini. To wire Gemini CLI custom commands, re-run with:"
     log "  bash $INSTALL_DIR/install.sh --wire-gemini-cli"
   fi
+fi
+
+# --- Optional: wire Cursor slash commands -----------------------------------
+
+wire_cursor() {
+  if [[ ! -d "$HOME/.cursor" ]]; then
+    # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
+    warn "~/.cursor not found — skipping Cursor wiring (is Cursor installed?)."
+    return 0
+  fi
+  local cdir="$HOME/.cursor/commands"
+  mkdir -p "$cdir"
+
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    link_one "$INSTALL_DIR/COMMANDS/${name}.md" "$cdir/${name}.md" "/$name"
+  done
+
+  log ""
+  log "Note: type / in Cursor's chat to surface the new commands."
+}
+
+if [[ "$WIRE_CURSOR" -eq 1 ]]; then
+  wire_cursor
+elif [[ -d "$HOME/.cursor" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    wire_cursor
+  elif [[ -t 0 && -t 1 ]]; then
+    read -r -p "Detected ~/.cursor — wire slash commands into Cursor? [y/N] " ans
+    case "$ans" in
+      [yY]|[yY][eE][sS]) wire_cursor ;;
+      *) log "(skipped — re-run with --wire-cursor to enable later)" ;;
+    esac
+  else
+    log ""
+    log "Detected ~/.cursor. To wire Cursor slash commands, re-run with:"
+    log "  bash $INSTALL_DIR/install.sh --wire-cursor"
+  fi
+fi
+
+# --- Optional: wire Cursor agent hooks (opt-in, no interactive offer) -------
+# Hooks change global Cursor agent behavior — always require an explicit flag.
+
+wire_cursor_hooks() {
+  if [[ ! -d "$HOME/.cursor" ]]; then
+    # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
+    warn "~/.cursor not found — skipping Cursor hooks wiring (is Cursor installed?)."
+    return 0
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "jq not found in PATH — Cursor hook scripts require jq to parse payloads."
+    warn "Install jq via your package manager, then re-run --wire-cursor-hooks."
+    return 0
+  fi
+
+  local hdir="$HOME/.cursor/hooks"
+  mkdir -p "$hdir"
+
+  local name
+  for name in usp-audit usp-redact-secrets usp-block-dangerous-shell usp-mcp-dial-control; do
+    chmod +x "$INSTALL_DIR/ADAPTERS/cursor/hooks/${name}.sh" 2>/dev/null || true
+    link_one "$INSTALL_DIR/ADAPTERS/cursor/hooks/${name}.sh" "$hdir/${name}.sh" "hook:$name"
+  done
+
+  # hooks.json is a real file (not a symlink) so the user can merge in their
+  # own hooks. Back up an existing one before overwriting.
+  local hooks_json="$HOME/.cursor/hooks.json"
+  local hooks_src="$INSTALL_DIR/ADAPTERS/cursor/hooks/hooks.json"
+  if [[ -e "$hooks_json" && ! -L "$hooks_json" ]]; then
+    local backup
+    backup="${hooks_json}.bak.$(date +%s)"
+    cp -p "$hooks_json" "$backup"
+    ok "Backed up existing $hooks_json → $backup"
+    warn "If your previous hooks.json had custom hooks, merge them into the new $hooks_json by hand."
+  elif [[ -L "$hooks_json" ]]; then
+    rm -f "$hooks_json"
+  fi
+  cp "$hooks_src" "$hooks_json"
+  ok "Wrote $hooks_json (USP reference config; safe to edit / extend)"
+
+  log ""
+  log "Note: restart Cursor to load the new hooks. Tail your project's"
+  log ".security-pilot/audit-trail.log to verify hook activity."
+}
+
+if [[ "$WIRE_CURSOR_HOOKS" -eq 1 ]]; then
+  wire_cursor_hooks
 fi
 
 # --- Done -------------------------------------------------------------------
