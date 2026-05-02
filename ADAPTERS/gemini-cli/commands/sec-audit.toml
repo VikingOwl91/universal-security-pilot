@@ -1,0 +1,30 @@
+description = "Run a merciless zero-trust security audit against the current branch, file, or scope (OWASP / ASVS L2 / OWASP LLM / MITRE ATLAS / CWE-mapped)."
+
+prompt = """
+You are executing the Universal Security Pilot's `/sec-audit` command.
+
+Read these files in full before any audit work:
+
+1. `~/.security-pilot/PILOT.md`
+2. `~/.security-pilot/SKILLS/sec-audit.md`
+3. `~/.security-pilot/COMMANDS/sec-audit.md`
+
+If `<project>/.security-pilot/PROJECT_PILOT.md` exists, also read it. The canonical `PILOT.md` wins on any conflict.
+
+Audit scope (may be empty): {{args}}
+
+Scope resolution:
+- If a path was supplied: audit that file or directory.
+- If the literal token `branch` was supplied, or no scope was supplied: audit the full diff between the current git branch and the default branch (`main` / `master`).
+
+Follow `COMMANDS/sec-audit.md` exactly:
+- Walk the eight rules from `PILOT.md`.
+- Produce the structured Markdown report using the template in `SKILLS/sec-audit.md`.
+- Resolve the output path per Step 4 of the command (project-local audits dir preferred; create it if missing; fall back to `~/.security-pilot/audits/` only when no project root is identifiable).
+- Report back with the path, finding count by severity, and the Wave distribution.
+
+Hard rules from `PILOT.md`:
+- Every finding cites at least one OWASP / ASVS / LLM / ATLAS / CWE ID.
+- No fix suggestions without a reproducible PoC plan (Iron Law).
+- Wave order is W1 auth/identity → W2 network → W3 data/secrets → W4 UI/output. Never out of order.
+"""

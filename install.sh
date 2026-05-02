@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -30,6 +30,7 @@ die()  { err "$*"; exit 1; }
 trap 'err "Installer aborted on line $LINENO."' ERR
 
 WIRE_CLAUDE=0
+WIRE_GEMINI_CLI=0
 ASSUME_YES=0
 UNINSTALL=0
 
@@ -40,10 +41,11 @@ Universal Security Pilot — installer
 Usage: install.sh [options]
 
 Options:
-  --wire-claude   Symlink slash commands into ~/.claude/commands (backs up existing files)
-  --yes, -y       Skip interactive prompts (assume yes)
-  --uninstall     Remove the installation and any symlinks it created
-  -h, --help      Show this help
+  --wire-claude       Symlink slash commands into ~/.claude/commands (backs up existing files)
+  --wire-gemini-cli   Symlink TOML custom commands into ~/.gemini/commands (backs up existing files)
+  --yes, -y           Skip interactive prompts (assume yes)
+  --uninstall         Remove the installation and any symlinks it created
+  -h, --help          Show this help
 
 Environment:
   USP_INSTALL_DIR  Override install path (default: \$HOME/.security-pilot)
@@ -54,10 +56,11 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --wire-claude) WIRE_CLAUDE=1 ;;
-    --yes|-y)      ASSUME_YES=1 ;;
-    --uninstall)   UNINSTALL=1 ;;
-    -h|--help)     usage; exit 0 ;;
+    --wire-claude)     WIRE_CLAUDE=1 ;;
+    --wire-gemini-cli) WIRE_GEMINI_CLI=1 ;;
+    --yes|-y)          ASSUME_YES=1 ;;
+    --uninstall)       UNINSTALL=1 ;;
+    -h|--help)         usage; exit 0 ;;
     *) die "Unknown option: $1 (use --help)" ;;
   esac
   shift
@@ -108,9 +111,24 @@ remove_claude_symlinks() {
   fi
 }
 
+remove_gemini_cli_symlinks() {
+  local cdir="$HOME/.gemini/commands"
+  local name target link_dest
+  [[ -d "$cdir" ]] || return 0
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    target="$cdir/${name}.toml"
+    [[ -L "$target" ]] || continue
+    link_dest="$(readlink "$target" 2>/dev/null || true)"
+    if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/gemini-cli/commands/${name}.toml" ]]; then
+      rm -f "$target" && ok "Removed symlink $target"
+    fi
+  done
+}
+
 if [[ "$UNINSTALL" -eq 1 ]]; then
   log "Uninstalling Universal Security Pilot..."
   remove_claude_symlinks
+  remove_gemini_cli_symlinks
   if [[ -d "$INSTALL_DIR" ]]; then
     if [[ -d "$INSTALL_DIR/.git" ]]; then
       rm -rf "$INSTALL_DIR" && ok "Removed $INSTALL_DIR"
@@ -174,6 +192,10 @@ REQUIRED_FILES=(
   "ADAPTERS/claude-code.md"
   "ADAPTERS/cursor.md"
   "ADAPTERS/gemini-cli.md"
+  "ADAPTERS/gemini-cli/commands/sec-init.toml"
+  "ADAPTERS/gemini-cli/commands/sec-audit.toml"
+  "ADAPTERS/gemini-cli/commands/sec-fix.toml"
+  "ADAPTERS/gemini-cli/commands/ai-harden.toml"
   "REFERENCE/framework-footguns.md"
 )
 for f in "${REQUIRED_FILES[@]}"; do
@@ -243,6 +265,44 @@ elif [[ -d "$HOME/.claude" ]]; then
     log ""
     log "Detected ~/.claude. To wire Claude Code slash commands, re-run with:"
     log "  bash $INSTALL_DIR/install.sh --wire-claude"
+  fi
+fi
+
+# --- Optional: wire Gemini CLI custom commands ------------------------------
+
+wire_gemini_cli() {
+  if [[ ! -d "$HOME/.gemini" ]]; then
+    # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
+    warn "~/.gemini not found — skipping Gemini CLI wiring (is Gemini CLI installed?)."
+    return 0
+  fi
+  local cdir="$HOME/.gemini/commands"
+  mkdir -p "$cdir"
+
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    link_one "$INSTALL_DIR/ADAPTERS/gemini-cli/commands/${name}.toml" "$cdir/${name}.toml" "/$name"
+  done
+
+  log ""
+  log "Note: in Gemini CLI, run /commands reload to pick up the new commands without restarting."
+}
+
+if [[ "$WIRE_GEMINI_CLI" -eq 1 ]]; then
+  wire_gemini_cli
+elif [[ -d "$HOME/.gemini" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    wire_gemini_cli
+  elif [[ -t 0 && -t 1 ]]; then
+    read -r -p "Detected ~/.gemini — wire TOML custom commands into Gemini CLI? [y/N] " ans
+    case "$ans" in
+      [yY]|[yY][eE][sS]) wire_gemini_cli ;;
+      *) log "(skipped — re-run with --wire-gemini-cli to enable later)" ;;
+    esac
+  else
+    log ""
+    log "Detected ~/.gemini. To wire Gemini CLI custom commands, re-run with:"
+    log "  bash $INSTALL_DIR/install.sh --wire-gemini-cli"
   fi
 fi
 
