@@ -76,8 +76,11 @@ The installer:
 - clones into `~/.security-pilot/` (override via `USP_INSTALL_DIR`),
 - is idempotent — re-running performs a fast-forward update only,
 - never clobbers local changes or unrelated files,
-- detects each supported tool directory (`~/.claude`, `~/.cursor`, `~/.gemini`, `~/.codex`) and offers wiring interactively. Pre-set the matching flag (`--wire-claude`, `--wire-cursor`, `--wire-cursor-hooks`, `--wire-gemini-cli`, `--wire-codex-cli`) to skip the prompt; `--yes` accepts every detected wiring,
-- can be removed with `bash install.sh --uninstall` (leaves user-customized files like `~/.cursor/hooks.json` in place).
+- detects each supported tool both by binary (`command -v`) and by config dir (`~/.claude`, `~/.cursor`, `~/.gemini`, `~/.codex`); offers wiring interactively when both are present,
+- writes a USP marker block to the matching memory file on `--wire-<tool>` (Claude → `~/.claude/CLAUDE.md`, Gemini → `~/.gemini/GEMINI.md`, Codex → `~/.codex/AGENTS.md`); markers make re-runs idempotent and uninstall removes only the block, preserving any user content,
+- prints a **detection summary** at the end showing what's installed, what's wired, and the exact wire commands to run for anything detected-but-unwired,
+- pre-set wire flags (`--wire-claude`, `--wire-cursor`, `--wire-cursor-hooks`, `--wire-gemini-cli`, `--wire-codex-cli`) skip the prompt; `--yes` accepts every detected wiring **except `--wire-cursor-hooks`** (always opt-in — modifies global agent behavior),
+- can be removed with `bash install.sh --uninstall` (strips USP stanza blocks from memory files; leaves user-customized files like `~/.cursor/hooks.json` in place).
 
 Prefer to inspect first?
 
@@ -94,13 +97,13 @@ The installer drops the canonical pilot at `~/.security-pilot/`. Four major codi
 
 | Tool | Wire flag | What gets installed | Adapter doc |
 |---|---|---|---|
-| **Claude Code** | `--wire-claude` | Slash commands → `~/.claude/commands/`; skills → `~/.claude/skills/` (direct symlinks to canonical `COMMANDS/*.md` and `SKILLS/*.md`) | [`ADAPTERS/claude-code.md`](ADAPTERS/claude-code.md) |
-| **Cursor** (commands) | `--wire-cursor` | Slash commands → `~/.cursor/commands/` (direct symlinks to canonical `COMMANDS/*.md`) | [`ADAPTERS/cursor.md`](ADAPTERS/cursor.md) |
+| **Claude Code** | `--wire-claude` | Slash commands → `~/.claude/commands/`; skills → `~/.claude/skills/` (symlinks to canonical `COMMANDS/*.md` / `SKILLS/*.md`); **stanza** → `~/.claude/CLAUDE.md` (markered block) | [`ADAPTERS/claude-code.md`](ADAPTERS/claude-code.md) |
+| **Cursor** (commands) | `--wire-cursor` | Slash commands → `~/.cursor/commands/` (symlinks to canonical `COMMANDS/*.md`). Stanza is *not* auto-written — Cursor's rules surface is project-level only; paste manually per project | [`ADAPTERS/cursor.md`](ADAPTERS/cursor.md) |
 | **Cursor** (hooks) | `--wire-cursor-hooks` | Agent-hook scripts → `~/.cursor/hooks/`; `hooks.json` → `~/.cursor/`. **Policy enforcement** — denies `rm -rf /` / `curl\|sh` / fork bombs, redacts files containing credentials, and enforces the Dial-Control egress allowlist on MCP tool calls. **Opt-in only** — modifies global Cursor agent behavior. Requires `jq`. Backs up an existing `hooks.json` before overwriting | same |
-| **Gemini CLI** | `--wire-gemini-cli` | TOML custom commands → `~/.gemini/commands/` (thin bootstraps that read canonical `COMMANDS/*.md` at invocation) | [`ADAPTERS/gemini-cli.md`](ADAPTERS/gemini-cli.md) |
-| **Codex CLI** | `--wire-codex-cli` | Custom prompts → `~/.codex/prompts/`; auto-discovered skills → `~/.codex/skills/<name>/SKILL.md` | [`ADAPTERS/codex-cli.md`](ADAPTERS/codex-cli.md) |
+| **Gemini CLI** | `--wire-gemini-cli` | TOML custom commands → `~/.gemini/commands/`; **stanza** → `~/.gemini/GEMINI.md` | [`ADAPTERS/gemini-cli.md`](ADAPTERS/gemini-cli.md) |
+| **Codex CLI** | `--wire-codex-cli` | Custom prompts → `~/.codex/prompts/`; auto-discovered skills → `~/.codex/skills/<name>/SKILL.md`; **stanza** → `~/.codex/AGENTS.md` | [`ADAPTERS/codex-cli.md`](ADAPTERS/codex-cli.md) |
 
-When the installer detects one of those tool directories it offers wiring interactively. Single source of truth stays in `COMMANDS/*.md` and `SKILLS/*.md` — every adapter reads from there at invocation time, so updates flow automatically.
+Stanzas are written between `<!-- USP:stanza:begin -->` / `<!-- USP:stanza:end -->` markers. Re-running the wire flag updates the block in place; user content outside the markers is preserved. `--uninstall` strips the markers and removes the file only if the stanza was the sole content. Single source of truth stays in `COMMANDS/*.md`, `SKILLS/*.md`, and `ADAPTERS/<tool>/stanza.md` — every adapter reads from there at invocation time, so updates flow automatically.
 
 ### Invocation conventions
 
@@ -139,12 +142,14 @@ For Claude Code, Cursor, Gemini CLI, and Codex CLI you can additionally paste th
 ├── COMMANDS/               # Slash-command implementations
 ├── ADAPTERS/               # Tool-specific wiring
 │   ├── claude-code.md      #   Claude Code (commands + skills)
+│   ├── claude-code/        #   ↳ stanza.md (CLAUDE.md autonomous-detection block)
 │   ├── cursor.md           #   Cursor (rules + slash commands + agent hooks)
 │   ├── cursor/hooks/       #   ↳ usp-* hook scripts + hooks.json
+│   ├── cursor/stanza.md    #   ↳ project-level rules stanza (paste-only)
 │   ├── gemini-cli.md       #   Gemini CLI (TOML custom commands)
-│   ├── gemini-cli/         #   ↳ TOML wrappers
+│   ├── gemini-cli/         #   ↳ TOML wrappers + stanza.md
 │   ├── codex-cli.md        #   Codex CLI (custom prompts + skills)
-│   └── codex-cli/          #   ↳ prompt + SKILL.md wrappers
+│   └── codex-cli/          #   ↳ prompt + SKILL.md wrappers + stanza.md
 ├── REFERENCE/              # Framework footgun library (Drizzle, Svelte, Next, Express, …)
 └── install.sh              # The installer
 ```

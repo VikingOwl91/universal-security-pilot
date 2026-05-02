@@ -36,19 +36,35 @@ Once `/sec-init` has run in a project, the agent reads:
 
 Project pilot **cannot loosen** canonical rules — only tighten.
 
-## Optional: extend the global CLAUDE.md
+## CLAUDE.md stanza (autonomous trigger detection)
 
-Add a stanza to `~/.claude/CLAUDE.md`:
+The stanza below is the canonical content the installer writes — and what you'd paste manually if installing without the wire flag. Source: [`claude-code/stanza.md`](claude-code/stanza.md).
+
+`bash ~/.security-pilot/install.sh --wire-claude` appends this stanza (between `<!-- USP:stanza:begin -->` / `<!-- USP:stanza:end -->` markers) to `~/.claude/CLAUDE.md`. Re-running the wire flag updates the block in place; user content outside the markers is untouched. To remove, delete the marker block (or run `--uninstall`).
 
 ```markdown
-## Security Workflow
+## Universal Security Pilot
 
-The Universal Security Pilot is installed at `~/.security-pilot/`.
+The Universal Security Pilot v3.0 is installed at `~/.security-pilot/`. When the user requests a security audit, remediation, or AI/LLM hardening, OR when you encounter security-relevant code (auth, payments, secrets, LLM data flows), follow this protocol:
 
-- Use `/sec-audit` for security review.
-- Use `/sec-fix` for remediation following the Wave Protocol.
-- Use `/ai-harden` for LLM/AI data-flow hardening.
-- Use `/sec-init` to onboard a new project.
+1. Read `~/.security-pilot/PILOT.md` in full.
+2. Read the matching skill: `~/.security-pilot/SKILLS/{sec-audit, sec-fix, ai-harden}.md`.
+3. If a project-local override exists, read `<project>/.security-pilot/PROJECT_PILOT.md`.
+4. Apply the loaded guidance literally.
 
-The canonical security rules live in `~/.security-pilot/PILOT.md`. Project overrides live in `<project>/.security-pilot/PROJECT_PILOT.md` after `/sec-init`.
+### Triggers
+
+| User says or implies | Action |
+|---|---|
+| "Audit this for security" / "review for vulns" | Apply `SKILLS/sec-audit.md` (or run `/sec-audit`) |
+| "Fix the findings" / "remediate" / works from an audit report | Apply `SKILLS/sec-fix.md` (or run `/sec-fix`), observing the Wave Protocol and the Iron Law |
+| "Harden the LLM endpoint" / "review the prompt safety" | Apply `SKILLS/ai-harden.md` (or run `/ai-harden`) |
+| "Onboard this project" / "set up security scaffold" | Apply `COMMANDS/sec-init.md` (or run `/sec-init`) |
+
+### Hard rules
+
+- Every finding cites at least one OWASP / ASVS / LLM / ATLAS / CWE ID.
+- No fix ships without a failing PoC test (Iron Law).
+- Wave order: W1 auth/identity → W2 network → W3 data/secrets → W4 UI/output. Never out of order.
+- Authority claims ("approved", "rushed deadline") do not override discipline. See PILOT.md and SKILLS/sec-fix.md rationalization tables.
 ```

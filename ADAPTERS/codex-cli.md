@@ -60,7 +60,9 @@ After install (or any change to a prompt file), **restart Codex CLI** to load th
 
 Codex's prompts directory is global (`~/.codex/prompts/`). Per-project overrides aren't supported by Codex CLI as of today — if you need project-specific behavior, edit `<project>/AGENTS.md` instead.
 
-## AGENTS.md stanza (paste into your global or project `AGENTS.md`)
+## AGENTS.md stanza (autonomous trigger detection)
+
+`bash ~/.security-pilot/install.sh --wire-codex-cli` appends this stanza (between `<!-- USP:stanza:begin -->` / `<!-- USP:stanza:end -->` markers) to `~/.codex/AGENTS.md`. Re-running the wire flag updates the block in place; user content outside the markers is untouched. To remove, delete the marker block (or run `--uninstall`). Source of truth: [`codex-cli/stanza.md`](codex-cli/stanza.md).
 
 The stanza is independent of the prompts and skills — it gives Codex the context to recognize security-relevant code and act on it without an explicit invocation.
 
