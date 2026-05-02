@@ -21,6 +21,8 @@ Wires the Universal Security Pilot into Cursor across all three of Cursor's exte
 
 Paste this stanza into your project-root `.cursorrules` (or `.cursor/rules/security-pilot.mdc`). It's independent of the slash commands and the hooks; it gives Cursor's model the context to recognize security-relevant code without an explicit invocation.
 
+**Note**: unlike the other adapters, `--wire-cursor` does **not** auto-append this stanza. Cursor's rules surface is project-level only (no user-global memory file equivalent to `CLAUDE.md` / `GEMINI.md` / `AGENTS.md`), so there's nowhere natural for the installer to write at user-global install time. Paste manually per project — or, if you'd rather, run `/sec-init` in the project, which gives the agent enough USP context for most flows even without the explicit rules file. Source of truth: [`cursor/stanza.md`](cursor/stanza.md).
+
 ```markdown
 # Universal Security Pilot — Cursor binding
 

@@ -51,7 +51,9 @@ After install (or after editing any TOML), run `/commands reload` inside Gemini 
 
 Drop a TOML of the same basename into `<project>/.gemini/commands/`. Gemini CLI will use the project version. Useful for tightening prompts on a per-project basis (for example, making `/sec-audit` always default to a specific subdirectory).
 
-## GEMINI.md stanza (paste into your global or project `GEMINI.md`)
+## GEMINI.md stanza (autonomous trigger detection)
+
+`bash ~/.security-pilot/install.sh --wire-gemini-cli` appends this stanza (between `<!-- USP:stanza:begin -->` / `<!-- USP:stanza:end -->` markers) to `~/.gemini/GEMINI.md`. Re-running the wire flag updates the block in place; user content outside the markers is untouched. To remove, delete the marker block (or run `--uninstall`). Source of truth: [`gemini-cli/stanza.md`](gemini-cli/stanza.md).
 
 The stanza is independent of the slash commands — it gives Gemini the context to recognize security-relevant code and act on it without an explicit command.
 

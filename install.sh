@@ -93,6 +93,39 @@ esac
 
 command -v git >/dev/null 2>&1 || die "Missing required tool: git"
 
+# --- Stanza utilities -------------------------------------------------------
+
+strip_stanza() {
+  # strip_stanza <target-file>  — remove the USP-marked block (and the file
+  # if it becomes empty as a result). Idempotent. Used by --uninstall.
+  local target="$1"
+  [[ -f "$target" ]] || return 0
+
+  local begin='<!-- USP:stanza:begin -->'
+  local end='<!-- USP:stanza:end -->'
+
+  grep -qF "$begin" "$target" 2>/dev/null || return 0
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -v b="$begin" -v e="$end" '
+    $0 == b { in_block = 1; next }
+    $0 == e { in_block = 0; next }
+    !in_block { print }
+  ' "$target" > "$tmp"
+
+  # Trim trailing blank lines we may have left behind.
+  awk 'NF { keep = NR } { lines[NR] = $0 } END { for (i = 1; i <= keep; i++) print lines[i] }' "$tmp" > "${tmp}.trim"
+  mv "${tmp}.trim" "$tmp"
+
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$target" "$tmp" && ok "Removed empty $target (no content remaining after stripping USP stanza)"
+  else
+    mv "$tmp" "$target"
+    ok "Stripped USP stanza from $target"
+  fi
+}
+
 # --- Uninstall --------------------------------------------------------------
 
 remove_claude_symlinks() {
@@ -200,6 +233,9 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   remove_gemini_cli_symlinks
   remove_codex_cli_symlinks
   remove_cursor_symlinks
+  strip_stanza "$HOME/.claude/CLAUDE.md"
+  strip_stanza "$HOME/.gemini/GEMINI.md"
+  strip_stanza "$HOME/.codex/AGENTS.md"
   if [[ -d "$INSTALL_DIR" ]]; then
     if [[ -d "$INSTALL_DIR/.git" ]]; then
       rm -rf "$INSTALL_DIR" && ok "Removed $INSTALL_DIR"
@@ -280,6 +316,10 @@ REQUIRED_FILES=(
   "ADAPTERS/codex-cli/skills/sec-audit/SKILL.md"
   "ADAPTERS/codex-cli/skills/sec-fix/SKILL.md"
   "ADAPTERS/codex-cli/skills/ai-harden/SKILL.md"
+  "ADAPTERS/claude-code/stanza.md"
+  "ADAPTERS/cursor/stanza.md"
+  "ADAPTERS/gemini-cli/stanza.md"
+  "ADAPTERS/codex-cli/stanza.md"
   "REFERENCE/framework-footguns.md"
 )
 for f in "${REQUIRED_FILES[@]}"; do
@@ -311,6 +351,47 @@ link_one() {
   ok "Linked $label → $src"
 }
 
+append_or_update_stanza() {
+  # append_or_update_stanza <target-file> <stanza-source> <label>
+  # Idempotently maintains a USP-marked block at the end of <target-file>.
+  # Strips any existing block between USP markers, then appends a fresh
+  # block from <stanza-source>. Anything outside the markers is preserved.
+  local target="$1" src="$2" label="$3"
+  [[ -f "$src" ]] || { warn "Stanza source $src missing, skipping $label"; return 0; }
+
+  local begin='<!-- USP:stanza:begin -->'
+  local end='<!-- USP:stanza:end -->'
+  local tmp
+  tmp="$(mktemp)"
+
+  if [[ -f "$target" ]]; then
+    awk -v b="$begin" -v e="$end" '
+      $0 == b { in_block = 1; next }
+      $0 == e { in_block = 0; next }
+      !in_block { print }
+    ' "$target" > "$tmp"
+  fi
+
+  if [[ -s "$tmp" ]]; then
+    # Ensure there's a blank line separator before our block.
+    if [[ "$(tail -c1 "$tmp" 2>/dev/null || true)" != "" ]]; then
+      printf '\n' >> "$tmp"
+    fi
+    printf '\n' >> "$tmp"
+  fi
+
+  {
+    printf '%s\n' "$begin"
+    printf '%s\n' '<!-- DO NOT EDIT BETWEEN THESE MARKERS — managed by ~/.security-pilot/install.sh -->'
+    cat "$src"
+    printf '%s\n' "$end"
+  } >> "$tmp"
+
+  mkdir -p "$(dirname "$target")" 2>/dev/null || true
+  mv "$tmp" "$target"
+  ok "Stanza synced → $target ($label)"
+}
+
 wire_claude() {
   if [[ ! -d "$HOME/.claude" ]]; then
     # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
@@ -328,6 +409,9 @@ wire_claude() {
   for name in sec-audit sec-fix ai-harden; do
     link_one "$INSTALL_DIR/SKILLS/${name}.md" "$sdir/${name}.md" "skill:$name"
   done
+
+  append_or_update_stanza "$HOME/.claude/CLAUDE.md" \
+    "$INSTALL_DIR/ADAPTERS/claude-code/stanza.md" "claude-code"
 
   log ""
   log "Note: Claude Code's autonomous Skill discovery activates after a session restart."
@@ -367,6 +451,9 @@ wire_gemini_cli() {
   for name in sec-init sec-audit sec-fix ai-harden; do
     link_one "$INSTALL_DIR/ADAPTERS/gemini-cli/commands/${name}.toml" "$cdir/${name}.toml" "/$name"
   done
+
+  append_or_update_stanza "$HOME/.gemini/GEMINI.md" \
+    "$INSTALL_DIR/ADAPTERS/gemini-cli/stanza.md" "gemini-cli"
 
   log ""
   log "Note: in Gemini CLI, run /commands reload to pick up the new commands without restarting."
@@ -499,6 +586,9 @@ wire_codex_cli() {
     link_one "$INSTALL_DIR/ADAPTERS/codex-cli/skills/${name}/SKILL.md" "$sdir/${name}/SKILL.md" "skill:\$$name"
   done
 
+  append_or_update_stanza "$HOME/.codex/AGENTS.md" \
+    "$INSTALL_DIR/ADAPTERS/codex-cli/stanza.md" "codex-cli"
+
   log ""
   log "Note: Codex CLI loads custom prompts only at startup — restart Codex to surface"
   log "the new /prompts:* commands. Skills auto-discover."
@@ -522,12 +612,95 @@ elif [[ -d "$HOME/.codex" ]]; then
   fi
 fi
 
+# --- Detection summary + suggested next steps -------------------------------
+
+print_status_line() {
+  # print_status_line <label> <bin?> <dir?> <wired?> <wire-hint>
+  local label="$1" bin="$2" dir="$3" wired="$4" hint="$5"
+  if [[ $bin -eq 1 && $dir -eq 1 ]]; then
+    if [[ $wired -eq 1 ]]; then
+      printf '  %s✓%s %-22s — %swired%s\n' "$C_GRN" "$C_RST" "$label" "$C_GRN" "$C_RST"
+    else
+      printf '  %s✓%s %-22s — not wired (%s)\n' "$C_GRN" "$C_RST" "$label" "$hint"
+    fi
+  elif [[ $bin -eq 1 ]]; then
+    printf '  %s!%s %-22s — binary present, config dir missing (run the CLI once to initialize)\n' "$C_YLW" "$C_RST" "$label"
+  elif [[ $dir -eq 1 ]]; then
+    printf '  %s!%s %-22s — config dir present, binary not in PATH\n' "$C_YLW" "$C_RST" "$label"
+  else
+    printf '  − %-22s — not detected\n' "$label"
+  fi
+}
+
+# Per-tool state
+claude_bin=0; cursor_bin=0; gemini_bin=0; codex_bin=0
+claude_dir=0; cursor_dir=0; gemini_dir=0; codex_dir=0
+claude_wired=0; cursor_cmds_wired=0; cursor_hooks_wired=0; gemini_wired=0; codex_wired=0
+
+command -v claude >/dev/null 2>&1 && claude_bin=1
+command -v cursor >/dev/null 2>&1 && cursor_bin=1
+command -v gemini >/dev/null 2>&1 && gemini_bin=1
+command -v codex  >/dev/null 2>&1 && codex_bin=1
+
+[[ -d "$HOME/.claude" ]] && claude_dir=1
+[[ -d "$HOME/.cursor" ]] && cursor_dir=1
+[[ -d "$HOME/.gemini" ]] && gemini_dir=1
+[[ -d "$HOME/.codex"  ]] && codex_dir=1
+
+[[ -L "$HOME/.claude/commands/sec-init.md"   ]] && claude_wired=1
+[[ -L "$HOME/.cursor/commands/sec-init.md"   ]] && cursor_cmds_wired=1
+[[ -L "$HOME/.cursor/hooks/usp-audit.sh"     ]] && cursor_hooks_wired=1
+[[ -L "$HOME/.gemini/commands/sec-init.toml" ]] && gemini_wired=1
+[[ -L "$HOME/.codex/prompts/sec-init.md"     ]] && codex_wired=1
+
+log ""
+log "${C_BLU}Detected tools${C_RST}"
+print_status_line "Claude Code"          "$claude_bin" "$claude_dir" "$claude_wired"      "run --wire-claude"
+if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
+  # Cursor has two independent wires; describe each.
+  if [[ $cursor_cmds_wired -eq 1 ]]; then
+    if [[ $cursor_hooks_wired -eq 1 ]]; then
+      printf '  %s✓%s %-22s — %swired%s (commands + hooks)\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST"
+    else
+      printf '  %s✓%s %-22s — commands %swired%s, hooks not wired (--wire-cursor-hooks for policy enforcement)\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST"
+    fi
+  else
+    printf '  %s✓%s %-22s — not wired (run --wire-cursor)\n' "$C_GRN" "$C_RST" "Cursor"
+  fi
+else
+  print_status_line "Cursor" "$cursor_bin" "$cursor_dir" 0 "run --wire-cursor"
+fi
+print_status_line "Gemini CLI"           "$gemini_bin" "$gemini_dir" "$gemini_wired"      "run --wire-gemini-cli"
+print_status_line "Codex CLI"            "$codex_bin"  "$codex_dir"  "$codex_wired"       "run --wire-codex-cli"
+
+has_suggestions=0
+[[ $claude_bin -eq 1 && $claude_dir -eq 1 && $claude_wired       -eq 0 ]] && has_suggestions=1
+[[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired  -eq 0 ]] && has_suggestions=1
+[[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && has_suggestions=1
+[[ $gemini_bin -eq 1 && $gemini_dir -eq 1 && $gemini_wired       -eq 0 ]] && has_suggestions=1
+[[ $codex_bin  -eq 1 && $codex_dir  -eq 1 && $codex_wired        -eq 0 ]] && has_suggestions=1
+
+if [[ $has_suggestions -eq 1 ]]; then
+  log ""
+  log "${C_BLU}Suggested next steps${C_RST}"
+  [[ $claude_bin -eq 1 && $claude_dir -eq 1 && $claude_wired      -eq 0 ]] && \
+    log "  bash $INSTALL_DIR/install.sh --wire-claude"
+  [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired -eq 0 ]] && \
+    log "  bash $INSTALL_DIR/install.sh --wire-cursor             # slash commands"
+  [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && \
+    log "  bash $INSTALL_DIR/install.sh --wire-cursor-hooks       # opt-in: policy enforcement (jq required)"
+  [[ $gemini_bin -eq 1 && $gemini_dir -eq 1 && $gemini_wired      -eq 0 ]] && \
+    log "  bash $INSTALL_DIR/install.sh --wire-gemini-cli"
+  [[ $codex_bin  -eq 1 && $codex_dir  -eq 1 && $codex_wired       -eq 0 ]] && \
+    log "  bash $INSTALL_DIR/install.sh --wire-codex-cli"
+fi
+
 # --- Done -------------------------------------------------------------------
 
 log ""
 ok "Universal Security Pilot installed at $INSTALL_DIR"
 log ""
-log "${C_BLU}Next steps${C_RST}"
+log "${C_BLU}Adapter docs${C_RST}"
 log "  • Claude Code:  $INSTALL_DIR/ADAPTERS/claude-code.md"
 log "  • Cursor:       $INSTALL_DIR/ADAPTERS/cursor.md"
 log "  • Gemini CLI:   $INSTALL_DIR/ADAPTERS/gemini-cli.md"
