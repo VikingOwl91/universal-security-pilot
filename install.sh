@@ -431,20 +431,25 @@ append_or_update_stanza() {
 }
 
 offer_wire() {
-  # offer_wire <force-flag-int> <home-subdir> <wire-fn-name> <wire-flag> <description>
+  # offer_wire <force-flag-int> <home-subdir> <wire-fn-name> <wire-flag> <description> [wired-marker]
   #
   # Decision tree:
-  #   force-flag set    → run wire fn unconditionally (it handles a missing config dir itself)
-  #   subdir absent     → silent no-op (nothing to wire)
+  #   force-flag set     → run wire fn unconditionally (idempotent; link_one no-ops if already linked)
+  #   subdir absent      → silent no-op (nothing to wire)
+  #   already wired      → silent no-op (the detection summary tells the user the state;
+  #                        no need to repeat "to wire X re-run with --wire-X" on every install)
   #   --yes (ASSUME_YES) → run wire fn
-  #   interactive (tty) → prompt y/N
-  #   non-interactive   → print re-run hint
-  local force="$1" subdir="$2" wire_fn="$3" flag="$4" desc="$5" ans
+  #   interactive (tty)  → prompt y/N
+  #   non-interactive    → print re-run hint
+  local force="$1" subdir="$2" wire_fn="$3" flag="$4" desc="$5" marker="${6:-}" ans
   if [[ "$force" -eq 1 ]]; then
     "$wire_fn"
     return 0
   fi
   [[ -d "$HOME/$subdir" ]] || return 0
+  if [[ -n "$marker" && -L "$HOME/$marker" ]]; then
+    return 0
+  fi
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     "$wire_fn"
   elif [[ -t 0 && -t 1 ]]; then
@@ -486,7 +491,7 @@ wire_claude() {
   log "Slash commands (/sec-audit, /sec-fix, /ai-harden, /sec-init) work immediately."
 }
 
-offer_wire "$WIRE_CLAUDE" ".claude" wire_claude --wire-claude "slash commands into Claude Code"
+offer_wire "$WIRE_CLAUDE" ".claude" wire_claude --wire-claude "slash commands into Claude Code" ".claude/commands/sec-init.md"
 
 # --- Optional: wire Gemini CLI custom commands ------------------------------
 
@@ -511,7 +516,7 @@ wire_gemini_cli() {
   log "Note: in Gemini CLI, run /commands reload to pick up the new commands without restarting."
 }
 
-offer_wire "$WIRE_GEMINI_CLI" ".gemini" wire_gemini_cli --wire-gemini-cli "TOML custom commands into Gemini CLI"
+offer_wire "$WIRE_GEMINI_CLI" ".gemini" wire_gemini_cli --wire-gemini-cli "TOML custom commands into Gemini CLI" ".gemini/commands/sec-init.toml"
 
 # --- Optional: wire Cursor slash commands -----------------------------------
 
@@ -533,7 +538,7 @@ wire_cursor() {
   log "Note: type / in Cursor's chat to surface the new commands."
 }
 
-offer_wire "$WIRE_CURSOR" ".cursor" wire_cursor --wire-cursor "slash commands into Cursor"
+offer_wire "$WIRE_CURSOR" ".cursor" wire_cursor --wire-cursor "slash commands into Cursor" ".cursor/commands/sec-init.md"
 
 # --- Optional: wire Cursor agent hooks (opt-in, no interactive offer) -------
 # Hooks change global Cursor agent behavior — always require an explicit flag.
@@ -614,7 +619,7 @@ wire_codex_cli() {
   log "the new /prompts:* commands. Skills auto-discover."
 }
 
-offer_wire "$WIRE_CODEX_CLI" ".codex" wire_codex_cli --wire-codex-cli "custom prompts and skills into Codex CLI"
+offer_wire "$WIRE_CODEX_CLI" ".codex" wire_codex_cli --wire-codex-cli "custom prompts and skills into Codex CLI" ".codex/prompts/sec-init.md"
 
 # --- Optional: wire Mistral Vibe skills -------------------------------------
 
@@ -641,7 +646,7 @@ wire_mistral_vibe() {
   log "the new /sec-init, /sec-audit, /sec-fix, and /ai-harden commands in autocomplete."
 }
 
-offer_wire "$WIRE_MISTRAL_VIBE" ".vibe" wire_mistral_vibe --wire-mistral-vibe "skills into Mistral Vibe"
+offer_wire "$WIRE_MISTRAL_VIBE" ".vibe" wire_mistral_vibe --wire-mistral-vibe "skills into Mistral Vibe" ".vibe/skills/sec-init/SKILL.md"
 
 # --- Detection summary + suggested next steps -------------------------------
 
@@ -837,7 +842,11 @@ print_status_line() {
   elif [[ $bin -eq 1 ]]; then
     printf '  %s!%s %-22s — binary present, config dir missing (run the CLI once to initialize)\n' "$C_YLW" "$C_RST" "$label"
   elif [[ $dir -eq 1 ]]; then
-    printf '  %s!%s %-22s — config dir present, binary not in PATH%s\n' "$C_YLW" "$C_RST" "$label" "$extras"
+    if [[ $wired -eq 1 ]]; then
+      printf '  %s!%s %-22s — wired (binary not in PATH yet)%s\n' "$C_YLW" "$C_RST" "$label" "$extras"
+    else
+      printf '  %s!%s %-22s — config dir present, binary not in PATH%s\n' "$C_YLW" "$C_RST" "$label" "$extras"
+    fi
   else
     printf '  − %-22s — not detected\n' "$label"
   fi
