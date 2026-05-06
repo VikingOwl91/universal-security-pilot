@@ -56,6 +56,28 @@ jobs:
               || { echo "::error file=$f::missing 'description:' field in frontmatter"; exit 1; }
           done
 
+      - name: validate Mistral Vibe SKILL.md frontmatter
+        run: |
+          set -e
+          for f in ADAPTERS/mistral-vibe/skills/*/SKILL.md; do
+            echo "  frontmatter check $f"
+            head -1 "$f" | grep -qx -- '---' \
+              || { echo "::error file=$f::missing '---' frontmatter opener on line 1"; exit 1; }
+            grep -q '^name: ' "$f" \
+              || { echo "::error file=$f::missing 'name:' field in frontmatter"; exit 1; }
+            grep -q '^description: ' "$f" \
+              || { echo "::error file=$f::missing 'description:' field in frontmatter"; exit 1; }
+            grep -q '^user-invocable: true$' "$f" \
+              || { echo "::error file=$f::missing 'user-invocable: true' (required for Vibe slash-command surfacing)"; exit 1; }
+            # Skill name must match parent directory name (Agent Skills spec)
+            dir_name="$(basename "$(dirname "$f")")"
+            skill_name="$(grep -m1 '^name: ' "$f" | sed 's/^name: //')"
+            if [ "$dir_name" != "$skill_name" ]; then
+              echo "::error file=$f::skill name '$skill_name' does not match parent directory '$dir_name'"
+              exit 1
+            fi
+          done
+
       - name: required canonical files present
         run: |
           set -e
@@ -74,10 +96,16 @@ jobs:
             ADAPTERS/cursor.md
             ADAPTERS/gemini-cli.md
             ADAPTERS/codex-cli.md
+            ADAPTERS/mistral-vibe.md
             ADAPTERS/claude-code/stanza.md
             ADAPTERS/cursor/stanza.md
             ADAPTERS/gemini-cli/stanza.md
             ADAPTERS/codex-cli/stanza.md
+            ADAPTERS/mistral-vibe/stanza.md
+            ADAPTERS/mistral-vibe/skills/sec-init/SKILL.md
+            ADAPTERS/mistral-vibe/skills/sec-audit/SKILL.md
+            ADAPTERS/mistral-vibe/skills/sec-fix/SKILL.md
+            ADAPTERS/mistral-vibe/skills/ai-harden/SKILL.md
             REFERENCE/framework-footguns.md
           )
           for f in "${required[@]}"; do
