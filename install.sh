@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--wire-all] [--migrate] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--wire-all] [--migrate] [--cleanup-orphans] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -36,6 +36,7 @@ WIRE_CURSOR_HOOKS=0
 WIRE_CODEX_CLI=0
 WIRE_MISTRAL_VIBE=0
 MIGRATE=0
+CLEANUP_ORPHANS=0
 ASSUME_YES=0
 UNINSTALL=0
 
@@ -62,6 +63,13 @@ Options:
                         managed git checkout. Backs up the existing directory to <dir>.bak.<ts>
                         and clones fresh. Refuses if the directory doesn't look like USP
                         (no PILOT.md) — never auto-migrates unrelated data.
+  --cleanup-orphans     Move USP-named files/dirs in tool config dirs that AREN'T on any wire
+                        path the installer manages (typical: leftover content from older USP
+                        versions or manual installs) to per-tool backup dirs at
+                        ~/.<tool>/.usp-orphan-backup-<ts>/. Reversible (mv, never rm).
+                        Only touches paths whose basename matches sec-init / sec-audit / sec-fix
+                        / ai-harden / security-pilot / usp-* and that live under the wire-parent
+                        dirs the installer scans (e.g. ~/.claude/skills/, ~/.codex/prompts/).
   --yes, -y             Skip interactive prompts (assume yes)
   --uninstall           Remove the installation and any symlinks it created
   -h, --help            Show this help
@@ -95,6 +103,7 @@ while [[ $# -gt 0 ]]; do
       # global Cursor agent behavior and remain explicit-only.
       ;;
     --migrate)           MIGRATE=1 ;;
+    --cleanup-orphans)   CLEANUP_ORPHANS=1 ;;
     --yes|-y)            ASSUME_YES=1 ;;
     --uninstall)         UNINSTALL=1 ;;
     -h|--help)           usage; exit 0 ;;
@@ -701,51 +710,174 @@ count_drift() {
   return 0
 }
 
+# --- Orphan detection -------------------------------------------------------
+#
+# An orphan is a path that:
+#   1. Lives directly under a USP wire-parent dir (commands/, skills/, etc.)
+#   2. Has a basename that looks USP-shaped (USP_NAMES_REGEX)
+#   3. Is NOT itself a wire target AND is not a parent dir of one
+#
+# Common cause: leftover content from older USP versions or manual installs
+# (e.g., ~/.claude/skills/sec-audit/ subdir from a pre-installer setup, when
+# the installer wires ~/.claude/skills/sec-audit.md as a file).
+
+# Wire-parent dirs scanned for orphans. Each row: tool|parent-relpath.
+WIRE_PARENTS=(
+  "claude|.claude/commands"
+  "claude|.claude/skills"
+  "cursor|.cursor/commands"
+  "cursor|.cursor/hooks"
+  "gemini|.gemini/commands"
+  "codex|.codex/prompts"
+  "codex|.codex/skills"
+  "vibe|.vibe/skills"
+)
+
+# Names that look like USP content. Matches the canonical short names plus
+# anything starting with `usp-` (covers hook scripts). Optional .ext suffix
+# (must be all-lowercase letters; doesn't match .bak.<digits> backups).
+USP_NAMES_REGEX='^(sec-init|sec-audit|sec-fix|ai-harden|security-pilot|usp-[a-z-]+)(\.[a-z]+)?$'
+
+is_wire_target_or_parent() {
+  # is_wire_target_or_parent <tool> <relpath>
+  # 0 (true) if <relpath> is a wire target for <tool>, or the parent dir of one.
+  # Prefix-matches the tool key in WIRE_TARGETS — so calling with "cursor"
+  # matches both "cursor-cmds" and "cursor-hooks" rows, which is what
+  # orphan detection needs (it scans all surfaces of a tool together).
+  local tool="$1" relpath="$2" row row_tool trel
+  for row in "${WIRE_TARGETS[@]}"; do
+    row_tool="${row%%|*}"
+    [[ "$row_tool" == "$tool" || "$row_tool" == "${tool}-"* ]] || continue
+    trel="${row#*|}"; trel="${trel%%|*}"
+    [[ "$trel" == "$relpath" ]] && return 0
+    [[ "$trel" == "${relpath}/"* ]] && return 0
+  done
+  return 1
+}
+
+find_orphans() {
+  # find_orphans <tool>  → echoes one orphan absolute path per line.
+  local tool="$1" parent_relpath full_parent entry name relpath row
+  for row in "${WIRE_PARENTS[@]}"; do
+    [[ "${row%%|*}" == "$tool" ]] || continue
+    parent_relpath="${row#*|}"
+    full_parent="$HOME/$parent_relpath"
+    [[ -d "$full_parent" ]] || continue
+    # Glob doesn't match dotfiles by default — that protects our own
+    # .usp-orphan-backup-<ts>/ dirs from being flagged.
+    shopt -s nullglob
+    for entry in "$full_parent"/*; do
+      name="$(basename "$entry")"
+      [[ "$name" =~ $USP_NAMES_REGEX ]] || continue
+      relpath="$parent_relpath/$name"
+      if is_wire_target_or_parent "$tool" "$relpath"; then
+        continue
+      fi
+      printf '%s\n' "$entry"
+    done
+    shopt -u nullglob
+  done
+  return 0
+}
+
+count_orphans() {
+  # count_orphans <tool>  → echoes the count of orphan paths.
+  find_orphans "$1" | wc -l | tr -d ' '
+  return 0
+}
+
+cleanup_orphans() {
+  # Move every orphan to ~/.<tool>/.usp-orphan-backup-<ts>/. Never deletes.
+  local ts tool entry backup_root name total=0
+  ts=$(date +%s)
+  for tool in claude cursor gemini codex vibe; do
+    local subdir
+    case "$tool" in
+      claude) subdir=".claude" ;;
+      cursor) subdir=".cursor" ;;
+      gemini) subdir=".gemini" ;;
+      codex)  subdir=".codex" ;;
+      vibe)   subdir=".vibe" ;;
+    esac
+    backup_root="$HOME/$subdir/.usp-orphan-backup-$ts"
+    while IFS= read -r entry; do
+      [[ -n "$entry" ]] || continue
+      mkdir -p "$backup_root"
+      name="$(basename "$entry")"
+      mv "$entry" "$backup_root/$name"
+      ok "Moved orphan: $entry → $backup_root/$name"
+      total=$((total+1))
+    done < <(find_orphans "$tool")
+  done
+  log ""
+  if [[ $total -eq 0 ]]; then
+    log "No orphans found — all USP-shaped paths under managed wire-parent dirs are wire targets."
+  else
+    log "$total orphan path(s) moved to per-tool backups under ~/.{claude,cursor,gemini,codex,vibe}/.usp-orphan-backup-$ts/"
+    log "Inspect, then delete with:  rm -rf ~/.{claude,cursor,gemini,codex,vibe}/.usp-orphan-backup-$ts"
+  fi
+}
+
 print_status_line() {
-  # print_status_line <label> <bin?> <dir?> <wired?> <wire-hint> [drift-count]
-  local label="$1" bin="$2" dir="$3" wired="$4" hint="$5" drift="${6:-0}"
-  local drift_suffix=""
+  # print_status_line <label> <bin?> <dir?> <wired?> <wire-hint> [drift-count] [orphan-count]
+  local label="$1" bin="$2" dir="$3" wired="$4" hint="$5" drift="${6:-0}" orphans="${7:-0}"
+  local extras=""
   if [[ $drift -gt 0 ]]; then
-    drift_suffix=$(printf ', %s!%s %d unmanaged file(s)' "$C_YLW" "$C_RST" "$drift")
+    extras+=$(printf ', %s!%s %d unmanaged file(s)' "$C_YLW" "$C_RST" "$drift")
+  fi
+  if [[ $orphans -gt 0 ]]; then
+    extras+=$(printf ', %s!%s %d orphan path(s)' "$C_YLW" "$C_RST" "$orphans")
   fi
   if [[ $bin -eq 1 && $dir -eq 1 ]]; then
     if [[ $wired -eq 1 ]]; then
-      printf '  %s✓%s %-22s — %swired%s%s\n' "$C_GRN" "$C_RST" "$label" "$C_GRN" "$C_RST" "$drift_suffix"
+      printf '  %s✓%s %-22s — %swired%s%s\n' "$C_GRN" "$C_RST" "$label" "$C_GRN" "$C_RST" "$extras"
     else
-      printf '  %s✓%s %-22s — not wired (%s)%s\n' "$C_GRN" "$C_RST" "$label" "$hint" "$drift_suffix"
+      printf '  %s✓%s %-22s — not wired (%s)%s\n' "$C_GRN" "$C_RST" "$label" "$hint" "$extras"
     fi
   elif [[ $bin -eq 1 ]]; then
     printf '  %s!%s %-22s — binary present, config dir missing (run the CLI once to initialize)\n' "$C_YLW" "$C_RST" "$label"
   elif [[ $dir -eq 1 ]]; then
-    printf '  %s!%s %-22s — config dir present, binary not in PATH%s\n' "$C_YLW" "$C_RST" "$label" "$drift_suffix"
+    printf '  %s!%s %-22s — config dir present, binary not in PATH%s\n' "$C_YLW" "$C_RST" "$label" "$extras"
   else
     printf '  − %-22s — not detected\n' "$label"
   fi
 }
 
-# Suggestions accumulate in this array as we walk the per-adapter rows below.
+# Suggestions and per-tool counts accumulate in these globals as we walk the rows below.
 suggested_wires=()
+total_orphans=0
 
 detect_simple_adapter() {
-  # detect_simple_adapter <label> <bin> <home-subdir> <wired-marker> <wire-flag> <drift-tool>
-  # Prints one status line (with drift count); appends to $suggested_wires if
-  # detected-but-unwired OR detected-with-drift.
+  # detect_simple_adapter <label> <bin> <home-subdir> <wired-marker> <wire-flag> <drift-tool> [orphan-tool]
+  # Prints one status line (with drift + orphan counts); appends to
+  # $suggested_wires if detected-but-unwired OR detected-with-drift, and to
+  # $total_orphans accumulator if orphans found.
   local label="$1" bin="$2" subdir="$3" marker="$4" flag="$5" drift_tool="$6"
-  local bin_present=0 dir_present=0 wired=0 drift
+  local orphan_tool="${7:-$drift_tool}"
+  local bin_present=0 dir_present=0 wired=0 drift orphans
   command -v "$bin" >/dev/null 2>&1 && bin_present=1
   [[ -d "$HOME/$subdir" ]] && dir_present=1
   [[ -L "$HOME/$marker" ]] && wired=1
   drift=$(count_drift "$drift_tool")
-  print_status_line "$label" "$bin_present" "$dir_present" "$wired" "run $flag" "$drift"
+  orphans=$(count_orphans "$orphan_tool")
+  print_status_line "$label" "$bin_present" "$dir_present" "$wired" "run $flag" "$drift" "$orphans"
   if [[ $bin_present -eq 1 && $dir_present -eq 1 ]]; then
     if [[ $wired -eq 0 ]]; then
       suggested_wires+=("$flag")
     elif [[ $drift -gt 0 ]]; then
-      # Wired but with drift — re-running --wire-X will refresh stale paths.
       suggested_wires+=("$flag    # refresh $drift unmanaged file(s)")
     fi
   fi
+  total_orphans=$((total_orphans + orphans))
 }
+
+# Run cleanup_orphans BEFORE the detection summary so the post-cleanup state
+# is what the user sees. Falls through silently if --cleanup-orphans wasn't passed.
+if [[ "$CLEANUP_ORPHANS" -eq 1 ]]; then
+  log ""
+  log "${C_BLU}Cleaning up orphan paths${C_RST}"
+  cleanup_orphans
+fi
 
 log ""
 log "${C_BLU}Detected tools${C_RST}"
@@ -759,22 +891,26 @@ command -v cursor >/dev/null 2>&1 && cursor_bin=1
 [[ -L "$HOME/.cursor/hooks/usp-audit.sh"   ]] && cursor_hooks_wired=1
 cursor_cmds_drift=$(count_drift "cursor-cmds")
 cursor_hooks_drift=$(count_drift "cursor-hooks")
-cursor_drift_suffix=""
+cursor_orphans=$(count_orphans "cursor")
+cursor_extras=""
 if [[ $cursor_cmds_drift -gt 0 || $cursor_hooks_drift -gt 0 ]]; then
-  cursor_drift_suffix=$(printf ', %s!%s %d unmanaged file(s)' "$C_YLW" "$C_RST" $((cursor_cmds_drift + cursor_hooks_drift)))
+  cursor_extras+=$(printf ', %s!%s %d unmanaged file(s)' "$C_YLW" "$C_RST" $((cursor_cmds_drift + cursor_hooks_drift)))
+fi
+if [[ $cursor_orphans -gt 0 ]]; then
+  cursor_extras+=$(printf ', %s!%s %d orphan path(s)' "$C_YLW" "$C_RST" "$cursor_orphans")
 fi
 if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
   if [[ $cursor_cmds_wired -eq 1 ]]; then
     if [[ $cursor_hooks_wired -eq 1 ]]; then
-      printf '  %s✓%s %-22s — %swired%s (commands + hooks)%s\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST" "$cursor_drift_suffix"
+      printf '  %s✓%s %-22s — %swired%s (commands + hooks)%s\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST" "$cursor_extras"
     else
-      printf '  %s✓%s %-22s — commands %swired%s, hooks not wired (--wire-cursor-hooks for policy enforcement)%s\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST" "$cursor_drift_suffix"
+      printf '  %s✓%s %-22s — commands %swired%s, hooks not wired (--wire-cursor-hooks for policy enforcement)%s\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST" "$cursor_extras"
     fi
   else
-    printf '  %s✓%s %-22s — not wired (run --wire-cursor)%s\n' "$C_GRN" "$C_RST" "Cursor" "$cursor_drift_suffix"
+    printf '  %s✓%s %-22s — not wired (run --wire-cursor)%s\n' "$C_GRN" "$C_RST" "Cursor" "$cursor_extras"
   fi
 else
-  print_status_line "Cursor" "$cursor_bin" "$cursor_dir" 0 "run --wire-cursor" $((cursor_cmds_drift + cursor_hooks_drift))
+  print_status_line "Cursor" "$cursor_bin" "$cursor_dir" 0 "run --wire-cursor" $((cursor_cmds_drift + cursor_hooks_drift)) "$cursor_orphans"
 fi
 [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired  -eq 0 ]] && suggested_wires+=("--wire-cursor             # slash commands")
 [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && suggested_wires+=("--wire-cursor-hooks       # opt-in: policy enforcement (jq required)")
@@ -786,10 +922,15 @@ if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
     suggested_wires+=("--wire-cursor-hooks       # refresh $cursor_hooks_drift unmanaged hook file(s)")
   fi
 fi
+total_orphans=$((total_orphans + cursor_orphans))
 
 detect_simple_adapter "Gemini CLI"   gemini .gemini .gemini/commands/sec-init.toml  --wire-gemini-cli   gemini
 detect_simple_adapter "Codex CLI"    codex  .codex  .codex/prompts/sec-init.md      --wire-codex-cli    codex
 detect_simple_adapter "Mistral Vibe" vibe   .vibe   .vibe/skills/sec-init/SKILL.md  --wire-mistral-vibe vibe
+
+if [[ $total_orphans -gt 0 && "$CLEANUP_ORPHANS" -ne 1 ]]; then
+  suggested_wires+=("--cleanup-orphans         # move $total_orphans USP-shaped path(s) outside wire targets to per-tool backup dirs")
+fi
 
 if [[ ${#suggested_wires[@]} -gt 0 ]]; then
   log ""
