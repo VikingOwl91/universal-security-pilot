@@ -6,7 +6,9 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Built with Iron Law TDD](https://img.shields.io/badge/built%20with-Iron%20Law%20TDD-red.svg)](#the-iron-law)
-[![Version 3.0](https://img.shields.io/badge/version-3.0-green.svg)](PILOT.md)
+[![Version 3.1.0-alpha](https://img.shields.io/badge/version-3.1.0--alpha-yellow.svg)](PILOT.md)
+
+> **Status — v3.1.0-alpha.** Active enforcement is the v3.0 Wave Protocol (**W1–W4, GA**). The v3.1 scaffolding (**W0** pre-commit, **W5** container, **W6** orchestration) is in alpha — recipes are not yet validated end-to-end and several citations need primary-source review. Do not run audits or fixes against W0/W5/W6 until the version is cut to a non-alpha `v3.1`. See each skill's status banner and [`PILOT.md`](PILOT.md) for the behavioral note.
 
 The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. First-class adapters ship for **Claude Code, Cursor, Gemini CLI, Codex CLI, and Mistral Vibe**; the same canonical pilot also works in Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
 
@@ -180,6 +182,8 @@ Once that exists, `/sec-audit`, `/sec-fix`, and `/ai-harden` automatically pick 
 ## Versioning
 
 The canonical pilot version is the line in `PILOT.md`'s frontmatter. Bumping the major version means a behavioral change to the Iron Law, the Wave Protocol, or the standards stack. Bumping the minor version means new patterns, footgun rows, or skill additions.
+
+**Current canonical version:** `3.1.0-alpha`. W1–W4 are GA and bound to the v3.0 contract; W0 / W5 / W6 are scaffolded with full footgun catalogues and PoC recipes but not yet validated end-to-end. The cut from `3.1.0-alpha` to `3.1.0` is gated on (1) end-to-end recipe validation against a reference project / image / cluster, (2) primary-source citation review on the rows flagged inside each skill, (3) any remaining stub bodies filled in. Pin to a tag (e.g. `git -C ~/.security-pilot fetch --tags && git -C ~/.security-pilot checkout v3.1.0-alpha`) if you want to anchor a checkout to a specific snapshot rather than tracking `main`.
 
 ## Roadmap — v3.1: Infrastructure Hardening
 
