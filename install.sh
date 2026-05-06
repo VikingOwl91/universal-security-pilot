@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--migrate] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--wire-all] [--migrate] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -53,6 +53,11 @@ Options:
                         modifies global Cursor agent behavior. Backs up an existing hooks.json)
   --wire-codex-cli      Symlink custom prompts and skills into ~/.codex/prompts and ~/.codex/skills
   --wire-mistral-vibe   Symlink skills into ~/.vibe/skills/<name>/SKILL.md (backs up existing files)
+  --wire-all            Wire every adapter whose config dir is detected under \$HOME (Claude,
+                        Cursor commands, Gemini, Codex, Vibe). Skips undetected ones silently —
+                        e.g. on a machine without ~/.codex, --wire-all leaves Codex alone instead
+                        of warning. Does NOT include --wire-cursor-hooks (always opt-in, modifies
+                        global agent behavior).
   --migrate             Convert a manually-installed (non-git) USP at \$USP_INSTALL_DIR into a
                         managed git checkout. Backs up the existing directory to <dir>.bak.<ts>
                         and clones fresh. Refuses if the directory doesn't look like USP
@@ -76,6 +81,19 @@ while [[ $# -gt 0 ]]; do
     --wire-cursor-hooks) WIRE_CURSOR_HOOKS=1 ;;
     --wire-codex-cli)    WIRE_CODEX_CLI=1 ;;
     --wire-mistral-vibe) WIRE_MISTRAL_VIBE=1 ;;
+    --wire-all)
+      # Only affects providers whose config dir is detected — keeps the flag
+      # quiet on machines that don't have all five tools installed. Explicit
+      # --wire-X earlier on the command line still takes effect because we
+      # only set 0 → 1 here, never 1 → 0.
+      [[ -d "$HOME/.claude" ]] && WIRE_CLAUDE=1
+      [[ -d "$HOME/.gemini" ]] && WIRE_GEMINI_CLI=1
+      [[ -d "$HOME/.cursor" ]] && WIRE_CURSOR=1
+      [[ -d "$HOME/.codex"  ]] && WIRE_CODEX_CLI=1
+      [[ -d "$HOME/.vibe"   ]] && WIRE_MISTRAL_VIBE=1
+      # --wire-cursor-hooks is intentionally NOT enabled here; hooks change
+      # global Cursor agent behavior and remain explicit-only.
+      ;;
     --migrate)           MIGRATE=1 ;;
     --yes|-y)            ASSUME_YES=1 ;;
     --uninstall)         UNINSTALL=1 ;;
@@ -618,19 +636,88 @@ offer_wire "$WIRE_MISTRAL_VIBE" ".vibe" wire_mistral_vibe --wire-mistral-vibe "s
 
 # --- Detection summary + suggested next steps -------------------------------
 
+# Single source of truth for "what this installer wires where". Each row:
+#   tool|target-relpath-from-HOME|canonical-relpath-from-INSTALL_DIR
+# Used by drift detection in the post-install summary.
+WIRE_TARGETS=(
+  "claude|.claude/commands/sec-init.md|COMMANDS/sec-init.md"
+  "claude|.claude/commands/sec-audit.md|COMMANDS/sec-audit.md"
+  "claude|.claude/commands/sec-fix.md|COMMANDS/sec-fix.md"
+  "claude|.claude/commands/ai-harden.md|COMMANDS/ai-harden.md"
+  "claude|.claude/skills/sec-audit.md|SKILLS/sec-audit.md"
+  "claude|.claude/skills/sec-fix.md|SKILLS/sec-fix.md"
+  "claude|.claude/skills/ai-harden.md|SKILLS/ai-harden.md"
+  "gemini|.gemini/commands/sec-init.toml|ADAPTERS/gemini-cli/commands/sec-init.toml"
+  "gemini|.gemini/commands/sec-audit.toml|ADAPTERS/gemini-cli/commands/sec-audit.toml"
+  "gemini|.gemini/commands/sec-fix.toml|ADAPTERS/gemini-cli/commands/sec-fix.toml"
+  "gemini|.gemini/commands/ai-harden.toml|ADAPTERS/gemini-cli/commands/ai-harden.toml"
+  "cursor-cmds|.cursor/commands/sec-init.md|COMMANDS/sec-init.md"
+  "cursor-cmds|.cursor/commands/sec-audit.md|COMMANDS/sec-audit.md"
+  "cursor-cmds|.cursor/commands/sec-fix.md|COMMANDS/sec-fix.md"
+  "cursor-cmds|.cursor/commands/ai-harden.md|COMMANDS/ai-harden.md"
+  "cursor-hooks|.cursor/hooks/usp-audit.sh|ADAPTERS/cursor/hooks/usp-audit.sh"
+  "cursor-hooks|.cursor/hooks/usp-redact-secrets.sh|ADAPTERS/cursor/hooks/usp-redact-secrets.sh"
+  "cursor-hooks|.cursor/hooks/usp-block-dangerous-shell.sh|ADAPTERS/cursor/hooks/usp-block-dangerous-shell.sh"
+  "cursor-hooks|.cursor/hooks/usp-mcp-dial-control.sh|ADAPTERS/cursor/hooks/usp-mcp-dial-control.sh"
+  "codex|.codex/prompts/sec-init.md|ADAPTERS/codex-cli/prompts/sec-init.md"
+  "codex|.codex/prompts/sec-audit.md|ADAPTERS/codex-cli/prompts/sec-audit.md"
+  "codex|.codex/prompts/sec-fix.md|ADAPTERS/codex-cli/prompts/sec-fix.md"
+  "codex|.codex/prompts/ai-harden.md|ADAPTERS/codex-cli/prompts/ai-harden.md"
+  "codex|.codex/skills/sec-audit/SKILL.md|ADAPTERS/codex-cli/skills/sec-audit/SKILL.md"
+  "codex|.codex/skills/sec-fix/SKILL.md|ADAPTERS/codex-cli/skills/sec-fix/SKILL.md"
+  "codex|.codex/skills/ai-harden/SKILL.md|ADAPTERS/codex-cli/skills/ai-harden/SKILL.md"
+  "vibe|.vibe/skills/sec-init/SKILL.md|ADAPTERS/mistral-vibe/skills/sec-init/SKILL.md"
+  "vibe|.vibe/skills/sec-audit/SKILL.md|ADAPTERS/mistral-vibe/skills/sec-audit/SKILL.md"
+  "vibe|.vibe/skills/sec-fix/SKILL.md|ADAPTERS/mistral-vibe/skills/sec-fix/SKILL.md"
+  "vibe|.vibe/skills/ai-harden/SKILL.md|ADAPTERS/mistral-vibe/skills/ai-harden/SKILL.md"
+)
+
+is_drifted() {
+  # Returns 0 (true) if a USP-managed wire path exists but isn't the expected
+  # canonical symlink — i.e. it's a regular file (manual install), a broken
+  # symlink, or a symlink pointing at the wrong target.
+  local target="$1" expected="$2"
+  if [[ -L "$target" ]]; then
+    [[ "$(readlink "$target")" != "$expected" ]]
+  elif [[ -e "$target" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+count_drift() {
+  # count_drift <tool>  → echoes the count of drifted wire paths for that tool.
+  local tool="$1" n=0 row trel can
+  for row in "${WIRE_TARGETS[@]}"; do
+    [[ "${row%%|*}" == "$tool" ]] || continue
+    trel="${row#*|}"; trel="${trel%%|*}"
+    can="${row##*|}"
+    if is_drifted "$HOME/$trel" "$INSTALL_DIR/$can"; then
+      n=$((n+1))
+    fi
+  done
+  echo "$n"
+  return 0
+}
+
 print_status_line() {
-  # print_status_line <label> <bin?> <dir?> <wired?> <wire-hint>
-  local label="$1" bin="$2" dir="$3" wired="$4" hint="$5"
+  # print_status_line <label> <bin?> <dir?> <wired?> <wire-hint> [drift-count]
+  local label="$1" bin="$2" dir="$3" wired="$4" hint="$5" drift="${6:-0}"
+  local drift_suffix=""
+  if [[ $drift -gt 0 ]]; then
+    drift_suffix=$(printf ', %s!%s %d unmanaged file(s)' "$C_YLW" "$C_RST" "$drift")
+  fi
   if [[ $bin -eq 1 && $dir -eq 1 ]]; then
     if [[ $wired -eq 1 ]]; then
-      printf '  %s✓%s %-22s — %swired%s\n' "$C_GRN" "$C_RST" "$label" "$C_GRN" "$C_RST"
+      printf '  %s✓%s %-22s — %swired%s%s\n' "$C_GRN" "$C_RST" "$label" "$C_GRN" "$C_RST" "$drift_suffix"
     else
-      printf '  %s✓%s %-22s — not wired (%s)\n' "$C_GRN" "$C_RST" "$label" "$hint"
+      printf '  %s✓%s %-22s — not wired (%s)%s\n' "$C_GRN" "$C_RST" "$label" "$hint" "$drift_suffix"
     fi
   elif [[ $bin -eq 1 ]]; then
     printf '  %s!%s %-22s — binary present, config dir missing (run the CLI once to initialize)\n' "$C_YLW" "$C_RST" "$label"
   elif [[ $dir -eq 1 ]]; then
-    printf '  %s!%s %-22s — config dir present, binary not in PATH\n' "$C_YLW" "$C_RST" "$label"
+    printf '  %s!%s %-22s — config dir present, binary not in PATH%s\n' "$C_YLW" "$C_RST" "$label" "$drift_suffix"
   else
     printf '  − %-22s — not detected\n' "$label"
   fi
@@ -640,22 +727,29 @@ print_status_line() {
 suggested_wires=()
 
 detect_simple_adapter() {
-  # detect_simple_adapter <label> <bin> <home-subdir> <wired-marker> <wire-flag>
-  # Prints one status line; appends to $suggested_wires if detected-but-unwired.
-  local label="$1" bin="$2" subdir="$3" marker="$4" flag="$5"
-  local bin_present=0 dir_present=0 wired=0
+  # detect_simple_adapter <label> <bin> <home-subdir> <wired-marker> <wire-flag> <drift-tool>
+  # Prints one status line (with drift count); appends to $suggested_wires if
+  # detected-but-unwired OR detected-with-drift.
+  local label="$1" bin="$2" subdir="$3" marker="$4" flag="$5" drift_tool="$6"
+  local bin_present=0 dir_present=0 wired=0 drift
   command -v "$bin" >/dev/null 2>&1 && bin_present=1
   [[ -d "$HOME/$subdir" ]] && dir_present=1
   [[ -L "$HOME/$marker" ]] && wired=1
-  print_status_line "$label" "$bin_present" "$dir_present" "$wired" "run $flag"
-  if [[ $bin_present -eq 1 && $dir_present -eq 1 && $wired -eq 0 ]]; then
-    suggested_wires+=("$flag")
+  drift=$(count_drift "$drift_tool")
+  print_status_line "$label" "$bin_present" "$dir_present" "$wired" "run $flag" "$drift"
+  if [[ $bin_present -eq 1 && $dir_present -eq 1 ]]; then
+    if [[ $wired -eq 0 ]]; then
+      suggested_wires+=("$flag")
+    elif [[ $drift -gt 0 ]]; then
+      # Wired but with drift — re-running --wire-X will refresh stale paths.
+      suggested_wires+=("$flag    # refresh $drift unmanaged file(s)")
+    fi
   fi
 }
 
 log ""
 log "${C_BLU}Detected tools${C_RST}"
-detect_simple_adapter "Claude Code" claude .claude .claude/commands/sec-init.md --wire-claude
+detect_simple_adapter "Claude Code" claude .claude .claude/commands/sec-init.md --wire-claude claude
 
 # Cursor is special: two independent wires (commands + hooks). Hand-rolled status.
 cursor_bin=0; cursor_dir=0; cursor_cmds_wired=0; cursor_hooks_wired=0
@@ -663,25 +757,39 @@ command -v cursor >/dev/null 2>&1 && cursor_bin=1
 [[ -d "$HOME/.cursor" ]]               && cursor_dir=1
 [[ -L "$HOME/.cursor/commands/sec-init.md" ]] && cursor_cmds_wired=1
 [[ -L "$HOME/.cursor/hooks/usp-audit.sh"   ]] && cursor_hooks_wired=1
+cursor_cmds_drift=$(count_drift "cursor-cmds")
+cursor_hooks_drift=$(count_drift "cursor-hooks")
+cursor_drift_suffix=""
+if [[ $cursor_cmds_drift -gt 0 || $cursor_hooks_drift -gt 0 ]]; then
+  cursor_drift_suffix=$(printf ', %s!%s %d unmanaged file(s)' "$C_YLW" "$C_RST" $((cursor_cmds_drift + cursor_hooks_drift)))
+fi
 if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
   if [[ $cursor_cmds_wired -eq 1 ]]; then
     if [[ $cursor_hooks_wired -eq 1 ]]; then
-      printf '  %s✓%s %-22s — %swired%s (commands + hooks)\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST"
+      printf '  %s✓%s %-22s — %swired%s (commands + hooks)%s\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST" "$cursor_drift_suffix"
     else
-      printf '  %s✓%s %-22s — commands %swired%s, hooks not wired (--wire-cursor-hooks for policy enforcement)\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST"
+      printf '  %s✓%s %-22s — commands %swired%s, hooks not wired (--wire-cursor-hooks for policy enforcement)%s\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST" "$cursor_drift_suffix"
     fi
   else
-    printf '  %s✓%s %-22s — not wired (run --wire-cursor)\n' "$C_GRN" "$C_RST" "Cursor"
+    printf '  %s✓%s %-22s — not wired (run --wire-cursor)%s\n' "$C_GRN" "$C_RST" "Cursor" "$cursor_drift_suffix"
   fi
 else
-  print_status_line "Cursor" "$cursor_bin" "$cursor_dir" 0 "run --wire-cursor"
+  print_status_line "Cursor" "$cursor_bin" "$cursor_dir" 0 "run --wire-cursor" $((cursor_cmds_drift + cursor_hooks_drift))
 fi
 [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired  -eq 0 ]] && suggested_wires+=("--wire-cursor             # slash commands")
 [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && suggested_wires+=("--wire-cursor-hooks       # opt-in: policy enforcement (jq required)")
+if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
+  if [[ $cursor_cmds_wired -eq 1 && $cursor_cmds_drift -gt 0 ]]; then
+    suggested_wires+=("--wire-cursor             # refresh $cursor_cmds_drift unmanaged command file(s)")
+  fi
+  if [[ $cursor_hooks_wired -eq 1 && $cursor_hooks_drift -gt 0 ]]; then
+    suggested_wires+=("--wire-cursor-hooks       # refresh $cursor_hooks_drift unmanaged hook file(s)")
+  fi
+fi
 
-detect_simple_adapter "Gemini CLI"   gemini .gemini .gemini/commands/sec-init.toml  --wire-gemini-cli
-detect_simple_adapter "Codex CLI"    codex  .codex  .codex/prompts/sec-init.md      --wire-codex-cli
-detect_simple_adapter "Mistral Vibe" vibe   .vibe   .vibe/skills/sec-init/SKILL.md  --wire-mistral-vibe
+detect_simple_adapter "Gemini CLI"   gemini .gemini .gemini/commands/sec-init.toml  --wire-gemini-cli   gemini
+detect_simple_adapter "Codex CLI"    codex  .codex  .codex/prompts/sec-init.md      --wire-codex-cli    codex
+detect_simple_adapter "Mistral Vibe" vibe   .vibe   .vibe/skills/sec-init/SKILL.md  --wire-mistral-vibe vibe
 
 if [[ ${#suggested_wires[@]} -gt 0 ]]; then
   log ""
