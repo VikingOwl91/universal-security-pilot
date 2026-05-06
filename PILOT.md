@@ -1,11 +1,13 @@
 ---
 title: Universal Security Pilot
-version: 3.0
+version: 3.1.0-alpha
 date: 2026-05-01
 applies-to: any agentic CLI (Claude Code, Gemini CLI, Cursor, Copilot Chat, etc.) with filesystem access
 ---
 
-# Universal Security Pilot (USP) v3.0
+# Universal Security Pilot (USP) v3.1 (alpha — Infrastructure Hardening scaffolding)
+
+> **Behavioral note.** Active enforcement remains the v3.0 Wave Protocol (W1–W4). The v3.1 scaffolding rows below (W0, W5, W6) document the intended shape of the framework's outward expansion. Skill bodies are stubs; do not run audits or fixes against them until the canonical SKILL files are filled and the version is cut to a non-alpha v3.1.
 
 This is the **canonical, tool-agnostic source of truth** for security audits, remediation, and AI/LLM hardening across any agentic coding tool. The skills and commands under `~/.security-pilot/SKILLS/` and `~/.security-pilot/COMMANDS/` build on this document; tool-specific adapters in `~/.security-pilot/ADAPTERS/` describe how to wire it into Claude Code, Gemini CLI, Cursor, and equivalents.
 
@@ -47,16 +49,23 @@ Non-negotiable. If you cannot write the failing test, you do not understand the 
 
 Fixes ship in this order. Earlier waves are prerequisites for later waves; an XSS fix that depends on an unauthenticated endpoint is meaningless until W1 is done.
 
+**Wave 0 is the Shift-Left entry point.** It runs *before* the agent can produce the artifact W1–W4 will later audit. A committed secret cannot be audited out — it has to never reach the commit. W0 enforces that gate.
+
 | Wave | Scope | Examples |
 |---|---|---|
+| **W0** *(v3.1 — scaffolding, not yet active)* | **Shift-Left:** Pre-commit gating, Git-Ops | Secret-scan before `git commit`, policy-lint of Dockerfiles / Helm values / Terraform plans, blocked-pattern denial at the local hook stage — must be satisfied before W1 fires |
 | **W1** | Authentication, identity, critical logic flaws | OIDC state, JWT validation, missing authz, race conditions on money/permissions |
 | **W2** | Network, middleware, infrastructure | CORS, SSRF, rate limits, TLS config, trusted-proxy headers |
 | **W3** | Data integrity, encryption at rest, secret management | KMS migration, redact secrets in logs, encrypt PII columns |
 | **W4** | UI hardening, output sanitization, resource management | XSS sinks, CSP, file-size caps, AI-output sanitization |
+| **W5** *(v3.1 — scaffolding, not yet active)* | **Build artifact:** Container / OCI image | Non-root enforcement, multi-stage build hardening, base-image pinning by digest, minimal final-layer surface |
+| **W6** *(v3.1 — scaffolding, not yet active)* | **Runtime:** Orchestration / Kubernetes | RBAC least-privilege, no plaintext secrets in YAML / Helm values, NetworkPolicy default-deny, PodSecurity admission |
 
 Within a wave: **blast radius descending** (Critical → High → Medium → Low).
 
-**Cross-wave dependencies:** if a W3 fix requires a W1 primitive (e.g., encrypting per-user data needs the user-identity story to be fixed first), W1 ships first — full stop.
+**Cross-wave dependencies:** if a W3 fix requires a W1 primitive (e.g., encrypting per-user data needs the user-identity story to be fixed first), W1 ships first — full stop. W0 sits *before* W1: if a pre-commit gate would have blocked a finding, the gate is the fix and the audit row reduces to "ensure the gate is configured."
+
+**v3.1 scaffolding caveat.** W0, W5, and W6 are documented but not yet operational. The skill bodies in `~/.security-pilot/SKILLS/sec-precommit.md`, `sec-container.md`, and `sec-orchestration.md` are stubs and explicitly mark themselves as such. Any audit or fix touching these waves must defer to v3.0 (W1–W4) discipline until the stubs are filled. The Iron Law applies recursively: the v3.1 waves themselves cannot ship without the same PoC-test discipline that gates every individual fix.
 
 ## Core Security Rules (Language-Agnostic)
 
