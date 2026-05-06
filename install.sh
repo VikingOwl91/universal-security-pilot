@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--migrate] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -35,6 +35,7 @@ WIRE_CURSOR=0
 WIRE_CURSOR_HOOKS=0
 WIRE_CODEX_CLI=0
 WIRE_MISTRAL_VIBE=0
+MIGRATE=0
 ASSUME_YES=0
 UNINSTALL=0
 
@@ -52,6 +53,10 @@ Options:
                         modifies global Cursor agent behavior. Backs up an existing hooks.json)
   --wire-codex-cli      Symlink custom prompts and skills into ~/.codex/prompts and ~/.codex/skills
   --wire-mistral-vibe   Symlink skills into ~/.vibe/skills/<name>/SKILL.md (backs up existing files)
+  --migrate             Convert a manually-installed (non-git) USP at \$USP_INSTALL_DIR into a
+                        managed git checkout. Backs up the existing directory to <dir>.bak.<ts>
+                        and clones fresh. Refuses if the directory doesn't look like USP
+                        (no PILOT.md) — never auto-migrates unrelated data.
   --yes, -y             Skip interactive prompts (assume yes)
   --uninstall           Remove the installation and any symlinks it created
   -h, --help            Show this help
@@ -71,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --wire-cursor-hooks) WIRE_CURSOR_HOOKS=1 ;;
     --wire-codex-cli)    WIRE_CODEX_CLI=1 ;;
     --wire-mistral-vibe) WIRE_MISTRAL_VIBE=1 ;;
+    --migrate)           MIGRATE=1 ;;
     --yes|-y)            ASSUME_YES=1 ;;
     --uninstall)         UNINSTALL=1 ;;
     -h|--help)           usage; exit 0 ;;
@@ -226,9 +232,40 @@ log "  Repo URL:    $REPO_URL"
 log "  Branch:      $BRANCH"
 log ""
 
-if [[ -e "$INSTALL_DIR" ]]; then
-  [[ -d "$INSTALL_DIR/.git" ]] || die "$INSTALL_DIR exists but is not a git checkout. Move/remove it and re-run."
+# Migrate a non-git installation (manual setup, older non-installer drop, etc.)
+# into a managed git checkout. Only runs with explicit --migrate; refuses if the
+# directory doesn't look like USP (no PILOT.md) so we never destructively rename
+# unrelated user data that happens to live at the install path.
+if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR/.git" ]]; then
+  if [[ "$MIGRATE" -ne 1 ]]; then
+    err "$INSTALL_DIR exists but is not a git checkout."
+    log ""
+    log "This usually means USP was installed manually (not via this installer)."
+    log "To migrate it to a managed git checkout, re-run with --migrate:"
+    log ""
+    log "  curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh \\"
+    log "    | bash -s -- --migrate"
+    log ""
+    log "Or, if you've cloned the installer locally:  bash install.sh --migrate"
+    log ""
+    log "Migration will:"
+    log "  1. Move the existing directory to ${INSTALL_DIR}.bak.<timestamp>"
+    log "  2. Clone the latest into $INSTALL_DIR"
+    log "  3. Leave the backup in place for you to inspect (delete when satisfied)"
+    exit 1
+  fi
 
+  [[ -f "$INSTALL_DIR/PILOT.md" ]] \
+    || die "$INSTALL_DIR exists but doesn't look like a USP installation (no PILOT.md). Refusing to migrate unrelated data; move it aside manually before re-running."
+
+  backup="${INSTALL_DIR}.bak.$(date +%s)"
+  mv "$INSTALL_DIR" "$backup"
+  ok "Migrated existing non-git installation: $INSTALL_DIR → $backup"
+  log "  Inspect or remove the backup with: rm -rf '$backup'"
+  log ""
+fi
+
+if [[ -e "$INSTALL_DIR" ]]; then
   log "Updating existing installation..."
   git -C "$INSTALL_DIR" remote get-url origin >/dev/null 2>&1 \
     || die "$INSTALL_DIR has no 'origin' remote."
