@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/VikingOwl91/universal-security-pilot/main/install.sh | bash
-#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--yes] [--uninstall]
+#   bash install.sh [--wire-claude] [--wire-gemini-cli] [--wire-cursor] [--wire-cursor-hooks] [--wire-codex-cli] [--wire-mistral-vibe] [--yes] [--uninstall]
 #
 # The installer is idempotent. Re-running updates an existing checkout
 # (fast-forward only) and never clobbers local changes or unrelated files.
@@ -34,6 +34,7 @@ WIRE_GEMINI_CLI=0
 WIRE_CURSOR=0
 WIRE_CURSOR_HOOKS=0
 WIRE_CODEX_CLI=0
+WIRE_MISTRAL_VIBE=0
 ASSUME_YES=0
 UNINSTALL=0
 
@@ -50,6 +51,7 @@ Options:
   --wire-cursor-hooks   Install agent hooks into ~/.cursor/hooks/ + ~/.cursor/hooks.json (opt-in only;
                         modifies global Cursor agent behavior. Backs up an existing hooks.json)
   --wire-codex-cli      Symlink custom prompts and skills into ~/.codex/prompts and ~/.codex/skills
+  --wire-mistral-vibe   Symlink skills into ~/.vibe/skills/<name>/SKILL.md (backs up existing files)
   --yes, -y             Skip interactive prompts (assume yes)
   --uninstall           Remove the installation and any symlinks it created
   -h, --help            Show this help
@@ -68,6 +70,7 @@ while [[ $# -gt 0 ]]; do
     --wire-cursor)       WIRE_CURSOR=1 ;;
     --wire-cursor-hooks) WIRE_CURSOR_HOOKS=1 ;;
     --wire-codex-cli)    WIRE_CODEX_CLI=1 ;;
+    --wire-mistral-vibe) WIRE_MISTRAL_VIBE=1 ;;
     --yes|-y)            ASSUME_YES=1 ;;
     --uninstall)         UNINSTALL=1 ;;
     -h|--help)           usage; exit 0 ;;
@@ -195,6 +198,21 @@ remove_codex_cli_symlinks() {
   fi
 }
 
+remove_mistral_vibe_symlinks() {
+  local sdir="$HOME/.vibe/skills"
+  local name target link_dest
+  [[ -d "$sdir" ]] || return 0
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    target="$sdir/${name}/SKILL.md"
+    [[ -L "$target" ]] || continue
+    link_dest="$(readlink "$target" 2>/dev/null || true)"
+    if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/mistral-vibe/skills/${name}/SKILL.md" ]]; then
+      rm -f "$target" && ok "Removed symlink $target"
+      rmdir "$sdir/${name}" 2>/dev/null || true
+    fi
+  done
+}
+
 remove_cursor_symlinks() {
   local cdir="$HOME/.cursor/commands"
   local hdir="$HOME/.cursor/hooks"
@@ -232,10 +250,12 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   remove_claude_symlinks
   remove_gemini_cli_symlinks
   remove_codex_cli_symlinks
+  remove_mistral_vibe_symlinks
   remove_cursor_symlinks
   strip_stanza "$HOME/.claude/CLAUDE.md"
   strip_stanza "$HOME/.gemini/GEMINI.md"
   strip_stanza "$HOME/.codex/AGENTS.md"
+  strip_stanza "$HOME/.vibe/AGENTS.md"
   if [[ -d "$INSTALL_DIR" ]]; then
     if [[ -d "$INSTALL_DIR/.git" ]]; then
       rm -rf "$INSTALL_DIR" && ok "Removed $INSTALL_DIR"
@@ -316,10 +336,16 @@ REQUIRED_FILES=(
   "ADAPTERS/codex-cli/skills/sec-audit/SKILL.md"
   "ADAPTERS/codex-cli/skills/sec-fix/SKILL.md"
   "ADAPTERS/codex-cli/skills/ai-harden/SKILL.md"
+  "ADAPTERS/mistral-vibe.md"
+  "ADAPTERS/mistral-vibe/skills/sec-init/SKILL.md"
+  "ADAPTERS/mistral-vibe/skills/sec-audit/SKILL.md"
+  "ADAPTERS/mistral-vibe/skills/sec-fix/SKILL.md"
+  "ADAPTERS/mistral-vibe/skills/ai-harden/SKILL.md"
   "ADAPTERS/claude-code/stanza.md"
   "ADAPTERS/cursor/stanza.md"
   "ADAPTERS/gemini-cli/stanza.md"
   "ADAPTERS/codex-cli/stanza.md"
+  "ADAPTERS/mistral-vibe/stanza.md"
   "REFERENCE/framework-footguns.md"
 )
 for f in "${REQUIRED_FILES[@]}"; do
@@ -612,6 +638,49 @@ elif [[ -d "$HOME/.codex" ]]; then
   fi
 fi
 
+# --- Optional: wire Mistral Vibe skills -------------------------------------
+
+wire_mistral_vibe() {
+  if [[ ! -d "$HOME/.vibe" ]]; then
+    # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
+    warn "~/.vibe not found — skipping Mistral Vibe wiring (is Mistral Vibe installed?)."
+    return 0
+  fi
+  local sdir="$HOME/.vibe/skills"
+  mkdir -p "$sdir"
+
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    mkdir -p "$sdir/${name}"
+    link_one "$INSTALL_DIR/ADAPTERS/mistral-vibe/skills/${name}/SKILL.md" "$sdir/${name}/SKILL.md" "skill:/$name"
+  done
+
+  append_or_update_stanza "$HOME/.vibe/AGENTS.md" \
+    "$INSTALL_DIR/ADAPTERS/mistral-vibe/stanza.md" "mistral-vibe"
+
+  log ""
+  log "Note: Mistral Vibe auto-discovers skills at startup — restart Vibe to surface"
+  log "the new /sec-init, /sec-audit, /sec-fix, and /ai-harden commands in autocomplete."
+}
+
+if [[ "$WIRE_MISTRAL_VIBE" -eq 1 ]]; then
+  wire_mistral_vibe
+elif [[ -d "$HOME/.vibe" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    wire_mistral_vibe
+  elif [[ -t 0 && -t 1 ]]; then
+    read -r -p "Detected ~/.vibe — wire skills into Mistral Vibe? [y/N] " ans
+    case "$ans" in
+      [yY]|[yY][eE][sS]) wire_mistral_vibe ;;
+      *) log "(skipped — re-run with --wire-mistral-vibe to enable later)" ;;
+    esac
+  else
+    log ""
+    log "Detected ~/.vibe. To wire Mistral Vibe skills, re-run with:"
+    log "  bash $INSTALL_DIR/install.sh --wire-mistral-vibe"
+  fi
+fi
+
 # --- Detection summary + suggested next steps -------------------------------
 
 print_status_line() {
@@ -633,25 +702,28 @@ print_status_line() {
 }
 
 # Per-tool state
-claude_bin=0; cursor_bin=0; gemini_bin=0; codex_bin=0
-claude_dir=0; cursor_dir=0; gemini_dir=0; codex_dir=0
-claude_wired=0; cursor_cmds_wired=0; cursor_hooks_wired=0; gemini_wired=0; codex_wired=0
+claude_bin=0; cursor_bin=0; gemini_bin=0; codex_bin=0; vibe_bin=0
+claude_dir=0; cursor_dir=0; gemini_dir=0; codex_dir=0; vibe_dir=0
+claude_wired=0; cursor_cmds_wired=0; cursor_hooks_wired=0; gemini_wired=0; codex_wired=0; vibe_wired=0
 
 command -v claude >/dev/null 2>&1 && claude_bin=1
 command -v cursor >/dev/null 2>&1 && cursor_bin=1
 command -v gemini >/dev/null 2>&1 && gemini_bin=1
 command -v codex  >/dev/null 2>&1 && codex_bin=1
+command -v vibe   >/dev/null 2>&1 && vibe_bin=1
 
 [[ -d "$HOME/.claude" ]] && claude_dir=1
 [[ -d "$HOME/.cursor" ]] && cursor_dir=1
 [[ -d "$HOME/.gemini" ]] && gemini_dir=1
 [[ -d "$HOME/.codex"  ]] && codex_dir=1
+[[ -d "$HOME/.vibe"   ]] && vibe_dir=1
 
-[[ -L "$HOME/.claude/commands/sec-init.md"   ]] && claude_wired=1
-[[ -L "$HOME/.cursor/commands/sec-init.md"   ]] && cursor_cmds_wired=1
-[[ -L "$HOME/.cursor/hooks/usp-audit.sh"     ]] && cursor_hooks_wired=1
-[[ -L "$HOME/.gemini/commands/sec-init.toml" ]] && gemini_wired=1
-[[ -L "$HOME/.codex/prompts/sec-init.md"     ]] && codex_wired=1
+[[ -L "$HOME/.claude/commands/sec-init.md"      ]] && claude_wired=1
+[[ -L "$HOME/.cursor/commands/sec-init.md"      ]] && cursor_cmds_wired=1
+[[ -L "$HOME/.cursor/hooks/usp-audit.sh"        ]] && cursor_hooks_wired=1
+[[ -L "$HOME/.gemini/commands/sec-init.toml"    ]] && gemini_wired=1
+[[ -L "$HOME/.codex/prompts/sec-init.md"        ]] && codex_wired=1
+[[ -L "$HOME/.vibe/skills/sec-init/SKILL.md"    ]] && vibe_wired=1
 
 log ""
 log "${C_BLU}Detected tools${C_RST}"
@@ -672,6 +744,7 @@ else
 fi
 print_status_line "Gemini CLI"           "$gemini_bin" "$gemini_dir" "$gemini_wired"      "run --wire-gemini-cli"
 print_status_line "Codex CLI"            "$codex_bin"  "$codex_dir"  "$codex_wired"       "run --wire-codex-cli"
+print_status_line "Mistral Vibe"         "$vibe_bin"   "$vibe_dir"   "$vibe_wired"        "run --wire-mistral-vibe"
 
 has_suggestions=0
 [[ $claude_bin -eq 1 && $claude_dir -eq 1 && $claude_wired       -eq 0 ]] && has_suggestions=1
@@ -679,6 +752,7 @@ has_suggestions=0
 [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && has_suggestions=1
 [[ $gemini_bin -eq 1 && $gemini_dir -eq 1 && $gemini_wired       -eq 0 ]] && has_suggestions=1
 [[ $codex_bin  -eq 1 && $codex_dir  -eq 1 && $codex_wired        -eq 0 ]] && has_suggestions=1
+[[ $vibe_bin   -eq 1 && $vibe_dir   -eq 1 && $vibe_wired         -eq 0 ]] && has_suggestions=1
 
 if [[ $has_suggestions -eq 1 ]]; then
   log ""
@@ -693,6 +767,8 @@ if [[ $has_suggestions -eq 1 ]]; then
     log "  bash $INSTALL_DIR/install.sh --wire-gemini-cli"
   [[ $codex_bin  -eq 1 && $codex_dir  -eq 1 && $codex_wired       -eq 0 ]] && \
     log "  bash $INSTALL_DIR/install.sh --wire-codex-cli"
+  [[ $vibe_bin   -eq 1 && $vibe_dir   -eq 1 && $vibe_wired        -eq 0 ]] && \
+    log "  bash $INSTALL_DIR/install.sh --wire-mistral-vibe"
 fi
 
 # --- Done -------------------------------------------------------------------
@@ -705,6 +781,7 @@ log "  • Claude Code:  $INSTALL_DIR/ADAPTERS/claude-code.md"
 log "  • Cursor:       $INSTALL_DIR/ADAPTERS/cursor.md"
 log "  • Gemini CLI:   $INSTALL_DIR/ADAPTERS/gemini-cli.md"
 log "  • Codex CLI:    $INSTALL_DIR/ADAPTERS/codex-cli.md"
+log "  • Mistral Vibe: $INSTALL_DIR/ADAPTERS/mistral-vibe.md"
 log ""
 log "Onboard a project: cd <project> && (your AI tool) → /sec-init"
 log "Run an audit:      /sec-audit"

@@ -8,7 +8,7 @@
 [![Built with Iron Law TDD](https://img.shields.io/badge/built%20with-Iron%20Law%20TDD-red.svg)](#the-iron-law)
 [![Version 3.0](https://img.shields.io/badge/version-3.0-green.svg)](PILOT.md)
 
-The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. First-class adapters ship for **Claude Code, Cursor, Gemini CLI, and Codex CLI**; the same canonical pilot also works in Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
+The Universal Security Pilot (USP) is a **disciplinary operating system** for AI-assisted security engineering. It does not run *on* your code — it runs *through* the agent that writes your code. First-class adapters ship for **Claude Code, Cursor, Gemini CLI, Codex CLI, and Mistral Vibe**; the same canonical pilot also works in Continue, Aider, Copilot Chat, or any other agentic tool that can read a Markdown file from disk.
 
 ## 🛡️ Proactive by Design (not just a scanner)
 
@@ -76,10 +76,10 @@ The installer:
 - clones into `~/.security-pilot/` (override via `USP_INSTALL_DIR`),
 - is idempotent — re-running performs a fast-forward update only,
 - never clobbers local changes or unrelated files,
-- detects each supported tool both by binary (`command -v`) and by config dir (`~/.claude`, `~/.cursor`, `~/.gemini`, `~/.codex`); offers wiring interactively when both are present,
-- writes a USP marker block to the matching memory file on `--wire-<tool>` (Claude → `~/.claude/CLAUDE.md`, Gemini → `~/.gemini/GEMINI.md`, Codex → `~/.codex/AGENTS.md`); markers make re-runs idempotent and uninstall removes only the block, preserving any user content,
+- detects each supported tool both by binary (`command -v`) and by config dir (`~/.claude`, `~/.cursor`, `~/.gemini`, `~/.codex`, `~/.vibe`); offers wiring interactively when both are present,
+- writes a USP marker block to the matching memory file on `--wire-<tool>` (Claude → `~/.claude/CLAUDE.md`, Gemini → `~/.gemini/GEMINI.md`, Codex → `~/.codex/AGENTS.md`, Mistral Vibe → `~/.vibe/AGENTS.md`); markers make re-runs idempotent and uninstall removes only the block, preserving any user content,
 - prints a **detection summary** at the end showing what's installed, what's wired, and the exact wire commands to run for anything detected-but-unwired,
-- pre-set wire flags (`--wire-claude`, `--wire-cursor`, `--wire-cursor-hooks`, `--wire-gemini-cli`, `--wire-codex-cli`) skip the prompt; `--yes` accepts every detected wiring **except `--wire-cursor-hooks`** (always opt-in — modifies global agent behavior),
+- pre-set wire flags (`--wire-claude`, `--wire-cursor`, `--wire-cursor-hooks`, `--wire-gemini-cli`, `--wire-codex-cli`, `--wire-mistral-vibe`) skip the prompt; `--yes` accepts every detected wiring **except `--wire-cursor-hooks`** (always opt-in — modifies global agent behavior),
 - can be removed with `bash install.sh --uninstall` (strips USP stanza blocks from memory files; leaves user-customized files like `~/.cursor/hooks.json` in place).
 
 Prefer to inspect first?
@@ -91,7 +91,7 @@ bash ~/.security-pilot/install.sh
 
 ## Wiring it into your tool
 
-The installer drops the canonical pilot at `~/.security-pilot/`. Four major coding-agent CLIs have first-class adapters with installer wiring; everything else is a paste-in stanza.
+The installer drops the canonical pilot at `~/.security-pilot/`. Five major coding-agent CLIs have first-class adapters with installer wiring; everything else is a paste-in stanza.
 
 ### Tools with installer-wired adapters
 
@@ -102,6 +102,7 @@ The installer drops the canonical pilot at `~/.security-pilot/`. Four major codi
 | **Cursor** (hooks) | `--wire-cursor-hooks` | Agent-hook scripts → `~/.cursor/hooks/`; `hooks.json` → `~/.cursor/`. **Policy enforcement** — denies `rm -rf /` / `curl\|sh` / fork bombs, redacts files containing credentials, and enforces the Dial-Control egress allowlist on MCP tool calls. **Opt-in only** — modifies global Cursor agent behavior. Requires `jq`. Backs up an existing `hooks.json` before overwriting | same |
 | **Gemini CLI** | `--wire-gemini-cli` | TOML custom commands → `~/.gemini/commands/`; **stanza** → `~/.gemini/GEMINI.md` | [`ADAPTERS/gemini-cli.md`](ADAPTERS/gemini-cli.md) |
 | **Codex CLI** | `--wire-codex-cli` | Custom prompts → `~/.codex/prompts/`; auto-discovered skills → `~/.codex/skills/<name>/SKILL.md`; **stanza** → `~/.codex/AGENTS.md` | [`ADAPTERS/codex-cli.md`](ADAPTERS/codex-cli.md) |
+| **Mistral Vibe** | `--wire-mistral-vibe` | Auto-discovered skills with `user-invocable: true` frontmatter → `~/.vibe/skills/<name>/SKILL.md` (surfaced as `/sec-init`, `/sec-audit`, `/sec-fix`, `/ai-harden`); **stanza** → `~/.vibe/AGENTS.md` | [`ADAPTERS/mistral-vibe.md`](ADAPTERS/mistral-vibe.md) |
 
 Stanzas are written between `<!-- USP:stanza:begin -->` / `<!-- USP:stanza:end -->` markers. Re-running the wire flag updates the block in place; user content outside the markers is preserved. `--uninstall` strips the markers and removes the file only if the stanza was the sole content. Single source of truth stays in `COMMANDS/*.md`, `SKILLS/*.md`, and `ADAPTERS/<tool>/stanza.md` — every adapter reads from there at invocation time, so updates flow automatically.
 
@@ -109,14 +110,14 @@ Stanzas are written between `<!-- USP:stanza:begin -->` / `<!-- USP:stanza:end -
 
 Slash-command surface and namespacing differ by tool. The action is the same.
 
-| Action | Claude Code / Cursor | Gemini CLI | Codex CLI |
+| Action | Claude Code / Cursor / Mistral Vibe | Gemini CLI | Codex CLI |
 |---|---|---|---|
 | Onboard project | `/sec-init` | `/sec-init` | `/prompts:sec-init` |
 | Run audit | `/sec-audit [scope]` | `/sec-audit [scope]` | `/prompts:sec-audit [scope]`  •  `$sec-audit [scope]` |
 | Remediate | `/sec-fix [report]` | `/sec-fix [report]` | `/prompts:sec-fix [report]`  •  `$sec-fix [report]` |
 | Harden LLM | `/ai-harden [scope]` | `/ai-harden [scope]` | `/prompts:ai-harden [scope]`  •  `$ai-harden [scope]` |
 
-Codex's `/prompts:` prefix is a tool-wide convention, not a USP choice. The `$<name>` form invokes the auto-discovered skill instead.
+Codex's `/prompts:` prefix is a tool-wide convention, not a USP choice. The `$<name>` form invokes the auto-discovered skill instead. Mistral Vibe surfaces the skills as `/sec-*` slash commands directly because the spec has a single user-invocable surface.
 
 ### Stanza-only tools (no installer wiring)
 
@@ -131,7 +132,7 @@ These tools have a system-prompt / rules surface but no slash-command or hook su
     - ~/.security-pilot/PILOT.md
   ```
 
-For Claude Code, Cursor, Gemini CLI, and Codex CLI you can additionally paste the matching memory-file stanza (`CLAUDE.md`, `.cursorrules`, `GEMINI.md`, `AGENTS.md`) for autonomous trigger detection on top of the explicit slash commands. See each adapter doc for the stanza.
+For Claude Code, Cursor, Gemini CLI, Codex CLI, and Mistral Vibe you can additionally paste the matching memory-file stanza (`CLAUDE.md`, `.cursorrules`, `GEMINI.md`, `AGENTS.md`) for autonomous trigger detection on top of the explicit slash commands. See each adapter doc for the stanza.
 
 ## Repository layout
 
@@ -149,7 +150,9 @@ For Claude Code, Cursor, Gemini CLI, and Codex CLI you can additionally paste th
 │   ├── gemini-cli.md       #   Gemini CLI (TOML custom commands)
 │   ├── gemini-cli/         #   ↳ TOML wrappers + stanza.md
 │   ├── codex-cli.md        #   Codex CLI (custom prompts + skills)
-│   └── codex-cli/          #   ↳ prompt + SKILL.md wrappers + stanza.md
+│   ├── codex-cli/          #   ↳ prompt + SKILL.md wrappers + stanza.md
+│   ├── mistral-vibe.md     #   Mistral Vibe (Agent-Skills slash commands)
+│   └── mistral-vibe/       #   ↳ SKILL.md wrappers + stanza.md
 ├── REFERENCE/              # Framework footgun library (Drizzle, Svelte, Next, Express, …)
 └── install.sh              # The installer
 ```
