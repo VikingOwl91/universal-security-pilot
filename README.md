@@ -82,6 +82,7 @@ The installer:
 - writes a USP marker block to the matching memory file on `--wire-<tool>` (Claude → `~/.claude/CLAUDE.md`, Gemini → `~/.gemini/GEMINI.md`, Codex → `~/.codex/AGENTS.md`, Mistral Vibe → `~/.vibe/AGENTS.md`); markers make re-runs idempotent and uninstall removes only the block, preserving any user content,
 - prints a **detection summary** at the end showing what's installed, what's wired, and the exact wire commands to run for anything detected-but-unwired,
 - pre-set wire flags (`--wire-claude`, `--wire-cursor`, `--wire-cursor-hooks`, `--wire-gemini-cli`, `--wire-codex-cli`, `--wire-mistral-vibe`) skip the prompt; `--yes` accepts every detected wiring **except `--wire-cursor-hooks`** (always opt-in — modifies global agent behavior),
+- supports `--migrate` for upgrading a pre-existing **manual** (non-git) installation in place: backs up the existing `~/.security-pilot/` to `~/.security-pilot.bak.<timestamp>` and clones fresh into the same path. Refuses if the directory doesn't look like USP (no `PILOT.md`) so unrelated user data is never moved. Symlinks from already-wired tool configs (`~/.claude/...`, etc.) keep resolving because the new clone sits at the same path,
 - can be removed with `bash install.sh --uninstall` (strips USP stanza blocks from memory files; leaves user-customized files like `~/.cursor/hooks.json` in place).
 
 Prefer to inspect first?
