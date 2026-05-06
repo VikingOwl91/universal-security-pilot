@@ -131,114 +131,62 @@ strip_stanza() {
 
 # --- Uninstall --------------------------------------------------------------
 
+remove_symlink() {
+  # remove_symlink <link-path> <expected-target>
+  # Idempotent: removes only if <link-path> is a symlink whose target matches exactly.
+  local link="$1" expected="$2" actual
+  [[ -L "$link" ]] || return 0
+  actual="$(readlink "$link" 2>/dev/null || true)"
+  [[ "$actual" == "$expected" ]] || return 0
+  rm -f "$link" && ok "Removed symlink $link"
+}
+
 remove_claude_symlinks() {
-  local cdir="$HOME/.claude/commands"
-  local sdir="$HOME/.claude/skills"
-  local name target link_dest
-  if [[ -d "$cdir" ]]; then
-    for name in sec-init sec-audit sec-fix ai-harden; do
-      target="$cdir/${name}.md"
-      [[ -L "$target" ]] || continue
-      link_dest="$(readlink "$target" 2>/dev/null || true)"
-      if [[ "$link_dest" == "$INSTALL_DIR/COMMANDS/${name}.md" ]]; then
-        rm -f "$target" && ok "Removed symlink $target"
-      fi
-    done
-  fi
-  if [[ -d "$sdir" ]]; then
-    for name in sec-audit sec-fix ai-harden; do
-      target="$sdir/${name}.md"
-      [[ -L "$target" ]] || continue
-      link_dest="$(readlink "$target" 2>/dev/null || true)"
-      if [[ "$link_dest" == "$INSTALL_DIR/SKILLS/${name}.md" ]]; then
-        rm -f "$target" && ok "Removed symlink $target"
-      fi
-    done
-  fi
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    remove_symlink "$HOME/.claude/commands/${name}.md" "$INSTALL_DIR/COMMANDS/${name}.md"
+  done
+  for name in sec-audit sec-fix ai-harden; do
+    remove_symlink "$HOME/.claude/skills/${name}.md" "$INSTALL_DIR/SKILLS/${name}.md"
+  done
 }
 
 remove_gemini_cli_symlinks() {
-  local cdir="$HOME/.gemini/commands"
-  local name target link_dest
-  [[ -d "$cdir" ]] || return 0
+  local name
   for name in sec-init sec-audit sec-fix ai-harden; do
-    target="$cdir/${name}.toml"
-    [[ -L "$target" ]] || continue
-    link_dest="$(readlink "$target" 2>/dev/null || true)"
-    if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/gemini-cli/commands/${name}.toml" ]]; then
-      rm -f "$target" && ok "Removed symlink $target"
-    fi
+    remove_symlink "$HOME/.gemini/commands/${name}.toml" "$INSTALL_DIR/ADAPTERS/gemini-cli/commands/${name}.toml"
   done
 }
 
 remove_codex_cli_symlinks() {
-  local pdir="$HOME/.codex/prompts"
-  local sdir="$HOME/.codex/skills"
-  local name target link_dest
-  if [[ -d "$pdir" ]]; then
-    for name in sec-init sec-audit sec-fix ai-harden; do
-      target="$pdir/${name}.md"
-      [[ -L "$target" ]] || continue
-      link_dest="$(readlink "$target" 2>/dev/null || true)"
-      if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/codex-cli/prompts/${name}.md" ]]; then
-        rm -f "$target" && ok "Removed symlink $target"
-      fi
-    done
-  fi
-  if [[ -d "$sdir" ]]; then
-    for name in sec-audit sec-fix ai-harden; do
-      target="$sdir/${name}/SKILL.md"
-      [[ -L "$target" ]] || continue
-      link_dest="$(readlink "$target" 2>/dev/null || true)"
-      if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/codex-cli/skills/${name}/SKILL.md" ]]; then
-        rm -f "$target" && ok "Removed symlink $target"
-        rmdir "$sdir/${name}" 2>/dev/null || true
-      fi
-    done
-  fi
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    remove_symlink "$HOME/.codex/prompts/${name}.md" "$INSTALL_DIR/ADAPTERS/codex-cli/prompts/${name}.md"
+  done
+  for name in sec-audit sec-fix ai-harden; do
+    remove_symlink "$HOME/.codex/skills/${name}/SKILL.md" "$INSTALL_DIR/ADAPTERS/codex-cli/skills/${name}/SKILL.md"
+    rmdir "$HOME/.codex/skills/${name}" 2>/dev/null || true
+  done
 }
 
 remove_mistral_vibe_symlinks() {
-  local sdir="$HOME/.vibe/skills"
-  local name target link_dest
-  [[ -d "$sdir" ]] || return 0
+  local name
   for name in sec-init sec-audit sec-fix ai-harden; do
-    target="$sdir/${name}/SKILL.md"
-    [[ -L "$target" ]] || continue
-    link_dest="$(readlink "$target" 2>/dev/null || true)"
-    if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/mistral-vibe/skills/${name}/SKILL.md" ]]; then
-      rm -f "$target" && ok "Removed symlink $target"
-      rmdir "$sdir/${name}" 2>/dev/null || true
-    fi
+    remove_symlink "$HOME/.vibe/skills/${name}/SKILL.md" "$INSTALL_DIR/ADAPTERS/mistral-vibe/skills/${name}/SKILL.md"
+    rmdir "$HOME/.vibe/skills/${name}" 2>/dev/null || true
   done
 }
 
 remove_cursor_symlinks() {
-  local cdir="$HOME/.cursor/commands"
-  local hdir="$HOME/.cursor/hooks"
-  local name target link_dest
-  if [[ -d "$cdir" ]]; then
-    for name in sec-init sec-audit sec-fix ai-harden; do
-      target="$cdir/${name}.md"
-      [[ -L "$target" ]] || continue
-      link_dest="$(readlink "$target" 2>/dev/null || true)"
-      if [[ "$link_dest" == "$INSTALL_DIR/COMMANDS/${name}.md" ]]; then
-        rm -f "$target" && ok "Removed symlink $target"
-      fi
-    done
-  fi
-  if [[ -d "$hdir" ]]; then
-    for name in usp-audit usp-redact-secrets usp-block-dangerous-shell usp-mcp-dial-control; do
-      target="$hdir/${name}.sh"
-      [[ -L "$target" ]] || continue
-      link_dest="$(readlink "$target" 2>/dev/null || true)"
-      if [[ "$link_dest" == "$INSTALL_DIR/ADAPTERS/cursor/hooks/${name}.sh" ]]; then
-        rm -f "$target" && ok "Removed symlink $target"
-      fi
-    done
-  fi
-  # ~/.cursor/hooks.json is intentionally left in place — it's a real file
-  # the user may have customized after USP wrote it. They can remove it manually.
+  local name
+  for name in sec-init sec-audit sec-fix ai-harden; do
+    remove_symlink "$HOME/.cursor/commands/${name}.md" "$INSTALL_DIR/COMMANDS/${name}.md"
+  done
+  for name in usp-audit usp-redact-secrets usp-block-dangerous-shell usp-mcp-dial-control; do
+    remove_symlink "$HOME/.cursor/hooks/${name}.sh" "$INSTALL_DIR/ADAPTERS/cursor/hooks/${name}.sh"
+  done
+  # ~/.cursor/hooks.json is intentionally left in place — it's a real file the
+  # user may have customized after USP wrote it. They can remove it manually.
   if [[ -f "$HOME/.cursor/hooks.json" ]]; then
     # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
     warn "~/.cursor/hooks.json left in place (may have user customizations). Remove manually if no longer needed."
@@ -418,6 +366,36 @@ append_or_update_stanza() {
   ok "Stanza synced → $target ($label)"
 }
 
+offer_wire() {
+  # offer_wire <force-flag-int> <home-subdir> <wire-fn-name> <wire-flag> <description>
+  #
+  # Decision tree:
+  #   force-flag set    → run wire fn unconditionally (it handles a missing config dir itself)
+  #   subdir absent     → silent no-op (nothing to wire)
+  #   --yes (ASSUME_YES) → run wire fn
+  #   interactive (tty) → prompt y/N
+  #   non-interactive   → print re-run hint
+  local force="$1" subdir="$2" wire_fn="$3" flag="$4" desc="$5" ans
+  if [[ "$force" -eq 1 ]]; then
+    "$wire_fn"
+    return 0
+  fi
+  [[ -d "$HOME/$subdir" ]] || return 0
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    "$wire_fn"
+  elif [[ -t 0 && -t 1 ]]; then
+    read -r -p "Detected ~/$subdir — wire $desc? [y/N] " ans
+    case "$ans" in
+      [yY]|[yY][eE][sS]) "$wire_fn" ;;
+      *) log "(skipped — re-run with $flag to enable later)" ;;
+    esac
+  else
+    log ""
+    log "Detected ~/$subdir. To wire $desc, re-run with:"
+    log "  bash $INSTALL_DIR/install.sh $flag"
+  fi
+}
+
 wire_claude() {
   if [[ ! -d "$HOME/.claude" ]]; then
     # shellcheck disable=SC2088  # tilde is intentional display text, not a path to expand
@@ -444,23 +422,7 @@ wire_claude() {
   log "Slash commands (/sec-audit, /sec-fix, /ai-harden, /sec-init) work immediately."
 }
 
-if [[ "$WIRE_CLAUDE" -eq 1 ]]; then
-  wire_claude
-elif [[ -d "$HOME/.claude" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    wire_claude
-  elif [[ -t 0 && -t 1 ]]; then
-    read -r -p "Detected ~/.claude — wire slash commands into Claude Code? [y/N] " ans
-    case "$ans" in
-      [yY]|[yY][eE][sS]) wire_claude ;;
-      *) log "(skipped — re-run with --wire-claude to enable later)" ;;
-    esac
-  else
-    log ""
-    log "Detected ~/.claude. To wire Claude Code slash commands, re-run with:"
-    log "  bash $INSTALL_DIR/install.sh --wire-claude"
-  fi
-fi
+offer_wire "$WIRE_CLAUDE" ".claude" wire_claude --wire-claude "slash commands into Claude Code"
 
 # --- Optional: wire Gemini CLI custom commands ------------------------------
 
@@ -485,23 +447,7 @@ wire_gemini_cli() {
   log "Note: in Gemini CLI, run /commands reload to pick up the new commands without restarting."
 }
 
-if [[ "$WIRE_GEMINI_CLI" -eq 1 ]]; then
-  wire_gemini_cli
-elif [[ -d "$HOME/.gemini" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    wire_gemini_cli
-  elif [[ -t 0 && -t 1 ]]; then
-    read -r -p "Detected ~/.gemini — wire TOML custom commands into Gemini CLI? [y/N] " ans
-    case "$ans" in
-      [yY]|[yY][eE][sS]) wire_gemini_cli ;;
-      *) log "(skipped — re-run with --wire-gemini-cli to enable later)" ;;
-    esac
-  else
-    log ""
-    log "Detected ~/.gemini. To wire Gemini CLI custom commands, re-run with:"
-    log "  bash $INSTALL_DIR/install.sh --wire-gemini-cli"
-  fi
-fi
+offer_wire "$WIRE_GEMINI_CLI" ".gemini" wire_gemini_cli --wire-gemini-cli "TOML custom commands into Gemini CLI"
 
 # --- Optional: wire Cursor slash commands -----------------------------------
 
@@ -523,23 +469,7 @@ wire_cursor() {
   log "Note: type / in Cursor's chat to surface the new commands."
 }
 
-if [[ "$WIRE_CURSOR" -eq 1 ]]; then
-  wire_cursor
-elif [[ -d "$HOME/.cursor" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    wire_cursor
-  elif [[ -t 0 && -t 1 ]]; then
-    read -r -p "Detected ~/.cursor — wire slash commands into Cursor? [y/N] " ans
-    case "$ans" in
-      [yY]|[yY][eE][sS]) wire_cursor ;;
-      *) log "(skipped — re-run with --wire-cursor to enable later)" ;;
-    esac
-  else
-    log ""
-    log "Detected ~/.cursor. To wire Cursor slash commands, re-run with:"
-    log "  bash $INSTALL_DIR/install.sh --wire-cursor"
-  fi
-fi
+offer_wire "$WIRE_CURSOR" ".cursor" wire_cursor --wire-cursor "slash commands into Cursor"
 
 # --- Optional: wire Cursor agent hooks (opt-in, no interactive offer) -------
 # Hooks change global Cursor agent behavior — always require an explicit flag.
@@ -620,23 +550,7 @@ wire_codex_cli() {
   log "the new /prompts:* commands. Skills auto-discover."
 }
 
-if [[ "$WIRE_CODEX_CLI" -eq 1 ]]; then
-  wire_codex_cli
-elif [[ -d "$HOME/.codex" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    wire_codex_cli
-  elif [[ -t 0 && -t 1 ]]; then
-    read -r -p "Detected ~/.codex — wire custom prompts and skills into Codex CLI? [y/N] " ans
-    case "$ans" in
-      [yY]|[yY][eE][sS]) wire_codex_cli ;;
-      *) log "(skipped — re-run with --wire-codex-cli to enable later)" ;;
-    esac
-  else
-    log ""
-    log "Detected ~/.codex. To wire Codex CLI prompts and skills, re-run with:"
-    log "  bash $INSTALL_DIR/install.sh --wire-codex-cli"
-  fi
-fi
+offer_wire "$WIRE_CODEX_CLI" ".codex" wire_codex_cli --wire-codex-cli "custom prompts and skills into Codex CLI"
 
 # --- Optional: wire Mistral Vibe skills -------------------------------------
 
@@ -663,23 +577,7 @@ wire_mistral_vibe() {
   log "the new /sec-init, /sec-audit, /sec-fix, and /ai-harden commands in autocomplete."
 }
 
-if [[ "$WIRE_MISTRAL_VIBE" -eq 1 ]]; then
-  wire_mistral_vibe
-elif [[ -d "$HOME/.vibe" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    wire_mistral_vibe
-  elif [[ -t 0 && -t 1 ]]; then
-    read -r -p "Detected ~/.vibe — wire skills into Mistral Vibe? [y/N] " ans
-    case "$ans" in
-      [yY]|[yY][eE][sS]) wire_mistral_vibe ;;
-      *) log "(skipped — re-run with --wire-mistral-vibe to enable later)" ;;
-    esac
-  else
-    log ""
-    log "Detected ~/.vibe. To wire Mistral Vibe skills, re-run with:"
-    log "  bash $INSTALL_DIR/install.sh --wire-mistral-vibe"
-  fi
-fi
+offer_wire "$WIRE_MISTRAL_VIBE" ".vibe" wire_mistral_vibe --wire-mistral-vibe "skills into Mistral Vibe"
 
 # --- Detection summary + suggested next steps -------------------------------
 
@@ -701,35 +599,34 @@ print_status_line() {
   fi
 }
 
-# Per-tool state
-claude_bin=0; cursor_bin=0; gemini_bin=0; codex_bin=0; vibe_bin=0
-claude_dir=0; cursor_dir=0; gemini_dir=0; codex_dir=0; vibe_dir=0
-claude_wired=0; cursor_cmds_wired=0; cursor_hooks_wired=0; gemini_wired=0; codex_wired=0; vibe_wired=0
+# Suggestions accumulate in this array as we walk the per-adapter rows below.
+suggested_wires=()
 
-command -v claude >/dev/null 2>&1 && claude_bin=1
-command -v cursor >/dev/null 2>&1 && cursor_bin=1
-command -v gemini >/dev/null 2>&1 && gemini_bin=1
-command -v codex  >/dev/null 2>&1 && codex_bin=1
-command -v vibe   >/dev/null 2>&1 && vibe_bin=1
-
-[[ -d "$HOME/.claude" ]] && claude_dir=1
-[[ -d "$HOME/.cursor" ]] && cursor_dir=1
-[[ -d "$HOME/.gemini" ]] && gemini_dir=1
-[[ -d "$HOME/.codex"  ]] && codex_dir=1
-[[ -d "$HOME/.vibe"   ]] && vibe_dir=1
-
-[[ -L "$HOME/.claude/commands/sec-init.md"      ]] && claude_wired=1
-[[ -L "$HOME/.cursor/commands/sec-init.md"      ]] && cursor_cmds_wired=1
-[[ -L "$HOME/.cursor/hooks/usp-audit.sh"        ]] && cursor_hooks_wired=1
-[[ -L "$HOME/.gemini/commands/sec-init.toml"    ]] && gemini_wired=1
-[[ -L "$HOME/.codex/prompts/sec-init.md"        ]] && codex_wired=1
-[[ -L "$HOME/.vibe/skills/sec-init/SKILL.md"    ]] && vibe_wired=1
+detect_simple_adapter() {
+  # detect_simple_adapter <label> <bin> <home-subdir> <wired-marker> <wire-flag>
+  # Prints one status line; appends to $suggested_wires if detected-but-unwired.
+  local label="$1" bin="$2" subdir="$3" marker="$4" flag="$5"
+  local bin_present=0 dir_present=0 wired=0
+  command -v "$bin" >/dev/null 2>&1 && bin_present=1
+  [[ -d "$HOME/$subdir" ]] && dir_present=1
+  [[ -L "$HOME/$marker" ]] && wired=1
+  print_status_line "$label" "$bin_present" "$dir_present" "$wired" "run $flag"
+  if [[ $bin_present -eq 1 && $dir_present -eq 1 && $wired -eq 0 ]]; then
+    suggested_wires+=("$flag")
+  fi
+}
 
 log ""
 log "${C_BLU}Detected tools${C_RST}"
-print_status_line "Claude Code"          "$claude_bin" "$claude_dir" "$claude_wired"      "run --wire-claude"
+detect_simple_adapter "Claude Code" claude .claude .claude/commands/sec-init.md --wire-claude
+
+# Cursor is special: two independent wires (commands + hooks). Hand-rolled status.
+cursor_bin=0; cursor_dir=0; cursor_cmds_wired=0; cursor_hooks_wired=0
+command -v cursor >/dev/null 2>&1 && cursor_bin=1
+[[ -d "$HOME/.cursor" ]]               && cursor_dir=1
+[[ -L "$HOME/.cursor/commands/sec-init.md" ]] && cursor_cmds_wired=1
+[[ -L "$HOME/.cursor/hooks/usp-audit.sh"   ]] && cursor_hooks_wired=1
 if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
-  # Cursor has two independent wires; describe each.
   if [[ $cursor_cmds_wired -eq 1 ]]; then
     if [[ $cursor_hooks_wired -eq 1 ]]; then
       printf '  %s✓%s %-22s — %swired%s (commands + hooks)\n' "$C_GRN" "$C_RST" "Cursor" "$C_GRN" "$C_RST"
@@ -742,33 +639,19 @@ if [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 ]]; then
 else
   print_status_line "Cursor" "$cursor_bin" "$cursor_dir" 0 "run --wire-cursor"
 fi
-print_status_line "Gemini CLI"           "$gemini_bin" "$gemini_dir" "$gemini_wired"      "run --wire-gemini-cli"
-print_status_line "Codex CLI"            "$codex_bin"  "$codex_dir"  "$codex_wired"       "run --wire-codex-cli"
-print_status_line "Mistral Vibe"         "$vibe_bin"   "$vibe_dir"   "$vibe_wired"        "run --wire-mistral-vibe"
+[[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired  -eq 0 ]] && suggested_wires+=("--wire-cursor             # slash commands")
+[[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && suggested_wires+=("--wire-cursor-hooks       # opt-in: policy enforcement (jq required)")
 
-has_suggestions=0
-[[ $claude_bin -eq 1 && $claude_dir -eq 1 && $claude_wired       -eq 0 ]] && has_suggestions=1
-[[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired  -eq 0 ]] && has_suggestions=1
-[[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && has_suggestions=1
-[[ $gemini_bin -eq 1 && $gemini_dir -eq 1 && $gemini_wired       -eq 0 ]] && has_suggestions=1
-[[ $codex_bin  -eq 1 && $codex_dir  -eq 1 && $codex_wired        -eq 0 ]] && has_suggestions=1
-[[ $vibe_bin   -eq 1 && $vibe_dir   -eq 1 && $vibe_wired         -eq 0 ]] && has_suggestions=1
+detect_simple_adapter "Gemini CLI"   gemini .gemini .gemini/commands/sec-init.toml  --wire-gemini-cli
+detect_simple_adapter "Codex CLI"    codex  .codex  .codex/prompts/sec-init.md      --wire-codex-cli
+detect_simple_adapter "Mistral Vibe" vibe   .vibe   .vibe/skills/sec-init/SKILL.md  --wire-mistral-vibe
 
-if [[ $has_suggestions -eq 1 ]]; then
+if [[ ${#suggested_wires[@]} -gt 0 ]]; then
   log ""
   log "${C_BLU}Suggested next steps${C_RST}"
-  [[ $claude_bin -eq 1 && $claude_dir -eq 1 && $claude_wired      -eq 0 ]] && \
-    log "  bash $INSTALL_DIR/install.sh --wire-claude"
-  [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_cmds_wired -eq 0 ]] && \
-    log "  bash $INSTALL_DIR/install.sh --wire-cursor             # slash commands"
-  [[ $cursor_bin -eq 1 && $cursor_dir -eq 1 && $cursor_hooks_wired -eq 0 ]] && \
-    log "  bash $INSTALL_DIR/install.sh --wire-cursor-hooks       # opt-in: policy enforcement (jq required)"
-  [[ $gemini_bin -eq 1 && $gemini_dir -eq 1 && $gemini_wired      -eq 0 ]] && \
-    log "  bash $INSTALL_DIR/install.sh --wire-gemini-cli"
-  [[ $codex_bin  -eq 1 && $codex_dir  -eq 1 && $codex_wired       -eq 0 ]] && \
-    log "  bash $INSTALL_DIR/install.sh --wire-codex-cli"
-  [[ $vibe_bin   -eq 1 && $vibe_dir   -eq 1 && $vibe_wired        -eq 0 ]] && \
-    log "  bash $INSTALL_DIR/install.sh --wire-mistral-vibe"
+  for s in "${suggested_wires[@]}"; do
+    log "  bash $INSTALL_DIR/install.sh $s"
+  done
 fi
 
 # --- Done -------------------------------------------------------------------
