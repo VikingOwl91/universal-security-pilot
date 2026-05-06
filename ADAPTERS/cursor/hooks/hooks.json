@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      { "command": "./hooks/usp-audit.sh" },
+      { "command": "./hooks/usp-block-dangerous-shell.sh" }
+    ],
+    "beforeMCPExecution": [
+      { "command": "./hooks/usp-audit.sh" },
+      { "command": "./hooks/usp-mcp-dial-control.sh" }
+    ],
+    "beforeReadFile": [
+      { "command": "./hooks/usp-redact-secrets.sh" }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "./hooks/usp-audit.sh" }
+    ],
+    "stop": [
+      { "command": "./hooks/usp-audit.sh" }
+    ]
+  }
+}
